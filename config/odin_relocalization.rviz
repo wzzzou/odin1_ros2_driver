@@ -1,0 +1,198 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: odom_grid
+      Plane: XY
+      Plane Cell Count: 30
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/Image
+          Enabled: true
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: camera_image
+          Normalize Range: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/image
+          Value: true
+        - Class: rviz_default_plugins/Image
+          Enabled: false
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: camera_undistorted
+          Normalize Range: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/image/undistorted
+          Value: false
+      Enabled: true
+      Name: Camera
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/TF
+          Enabled: true
+          Frame Timeout: 15
+          Marker Scale: 0.8
+          Name: tf_frames_map_odom_odin
+          Show Arrows: true
+          Show Axes: true
+          Show Names: true
+          Update Interval: 0
+          Value: true
+        - Class: rviz_default_plugins/Odometry
+          Enabled: true
+          Keep: 1
+          Name: odom_pose_current
+          Shape:
+            Axes Length: 1.0
+            Axes Radius: 0.08
+            Value: Axes
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/odometry
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: odom_path_after_relocalization
+          Topic:
+            Depth: 10
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/path
+          Value: true
+      Enabled: true
+      Name: Relocalization State
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/PointCloud2
+          Alpha: 1
+          Channel Name: rgb
+          Color Transformer: RGB8
+          Decay Time: 0
+          Enabled: true
+          Name: slam_current
+          Position Transformer: XYZ
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 10
+            Durability Policy: Volatile
+            Filter size: 30
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/cloud_slam
+          Use Fixed Frame: true
+          Value: true
+        - Class: rviz_default_plugins/PointCloud2
+          Alpha: 0.16
+          Channel Name: rgb
+          Color Transformer: RGB8
+          Decay Time: 30
+          Enabled: false
+          Name: slam_recent_30s
+          Position Transformer: XYZ
+          Size (Pixels): 1
+          Size (m): 0.006
+          Style: Points
+          Topic:
+            Depth: 30
+            Durability Policy: Volatile
+            Filter size: 50
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/cloud_slam
+          Use Fixed Frame: true
+          Value: false
+        - Class: rviz_default_plugins/PointCloud2
+          Alpha: 0.8
+          Channel Name: intensity
+          Color Transformer: Intensity
+          Decay Time: 0
+          Enabled: false
+          Name: raw_current
+          Position Transformer: XYZ
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 10
+            Durability Policy: Volatile
+            Filter size: 20
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/cloud_raw
+          Use Fixed Frame: true
+          Value: false
+        - Class: rviz_default_plugins/PointCloud2
+          Alpha: 1
+          Channel Name: rgb
+          Color Transformer: RGB8
+          Decay Time: 0
+          Enabled: false
+          Name: render_current
+          Position Transformer: XYZ
+          Size (Pixels): 3
+          Size (m): 0.01
+          Style: Points
+          Topic:
+            Depth: 10
+            Durability Policy: Volatile
+            Filter size: 20
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/cloud_render
+          Use Fixed Frame: true
+          Value: false
+      Enabled: true
+      Name: Cloud
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 30; 30; 36
+    Fixed Frame: odom
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 18
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Name: Current View
+      Pitch: 1.1
+      Target Frame: <Fixed Frame>
+      Yaw: 0.8
+Window Geometry:
+  Height: 900
+  Width: 1400

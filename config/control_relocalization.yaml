@@ -1,0 +1,54 @@
+# Odin1 重定位模式配置。
+# 绑定关系：custom_map_mode: 2 = Relocalization 重定位模式。
+# relocalization_map_abs_path 可显式指定 Odin1 建图模式生成的 .bin 地图文件。
+# 留空时，odin1_relocalization.launch.py 会自动扫描 map/*/*.bin 中最新的地图。
+
+register_keys:
+  strict_usb3.0_check: 1
+  use_host_ros_time: 0
+  streamctrl: 1
+
+  sendrgbcompressed: 1
+  sendrgb: 1
+  sendrgbundistort: 0
+
+  sendimu: 1
+  enable_imu_smooth: 0
+  imu_smooth_frequency: 400
+
+  sendodom: 1
+  send_odom_baselink_tf: 1
+
+  senddtof: 1
+  cloud_raw_confidence_threshold: 35
+  dtof_fps: 100
+
+  sendcloudslam: 1
+  sendcloudrender: 1
+
+  senddepth: 0
+  sendreprojection: 0
+  sendoverlay: 0
+  overlay_reprojected_topic: "/odin1/reprojected_image"
+  overlay_camera_topic: "/odin1/image/undistorted"
+  overlay_output_topic: "/odin1/overlay_image"
+  overlay_alpha: 0.6
+
+  recorddata: 0
+  devstatuslog: 1
+  save_log: 0
+
+  pubintensitygray: 0
+  showpath: 1
+  showcamerapose: 0
+
+  custom_map_mode: 2
+  custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  relocalization_map_abs_path: ""
+
+  mapping_result_dest_dir: ""
+  mapping_result_file_name: ""
+
+  sendimagemask: 0
+  image_mask_abs_path: ""
+  resetalgo: 0
