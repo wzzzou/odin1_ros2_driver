@@ -243,4 +243,4 @@ int YamlParser::getCustomParameterInt(const std::string& param_name, int default
     return default_value;
 }
 
-} 
+}

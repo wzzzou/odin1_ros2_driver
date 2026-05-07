@@ -147,7 +147,8 @@ int main(int argc, char **argv)
     std::string package_path = get_package_source_directory();
     RCLCPP_INFO(node->get_logger(), "Package path: %s", package_path.c_str());
     
-    std::string config_file = package_path + "/config/control_command.yaml";
+    std::string default_config_file = package_path + "/config/control_command.yaml";
+    std::string config_file = node->declare_parameter<std::string>("config_file", default_config_file);
     RCLCPP_INFO(node->get_logger(), "Loading config from: %s", config_file.c_str());
 
     YAML::Node config = YAML::LoadFile(config_file);
