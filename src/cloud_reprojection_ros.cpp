@@ -254,7 +254,8 @@ int main(int argc, char** argv)
     
     // Check if reprojection is enabled from control_command.yaml
     std::string package_path = get_package_source_directory();
-    std::string config_file = package_path + "/config/control_command.yaml";
+    std::string default_config_file = package_path + "/config/control_command.yaml";
+    std::string config_file = temp_node->declare_parameter<std::string>("config_file", default_config_file);
     
     try {
         YAML::Node config = YAML::LoadFile(config_file);

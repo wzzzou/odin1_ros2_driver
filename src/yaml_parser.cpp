@@ -130,6 +130,8 @@ bool YamlParser::loadConfig() {
                 } catch (const std::exception& e) {
                     std::cerr << "Failed to parse key " << key << ": " << e.what() << std::endl;
                 }
+            } else if (ignored_keys_.find(key) != ignored_keys_.end()) {
+                std::cerr << "Ignoring host-unused key: " << key << std::endl;
             } else {
                 // Regular (non-custom) integer parameter
                 try {

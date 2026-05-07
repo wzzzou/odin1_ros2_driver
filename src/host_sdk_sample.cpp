@@ -1833,7 +1833,19 @@ int main(int argc, char *argv[])
     	std::string package_path = get_package_share_path("odin_ros_driver");
     #endif
         std::string config_dir = package_path + "/config";
-        std::string config_file = config_dir + "/control_command.yaml";
+        std::string default_config_file = config_dir + "/control_command.yaml";
+    #ifdef ROS2
+        std::string config_file = node->declare_parameter<std::string>("config_file", default_config_file);
+        std::string map_file_override = node->declare_parameter<std::string>("map_file", "");
+        RCLCPP_INFO(node->get_logger(), "Loading config from: %s", config_file.c_str());
+    #else
+        ros::NodeHandle pnh("~");
+        std::string config_file;
+        std::string map_file_override;
+        pnh.param<std::string>("config_file", config_file, default_config_file);
+        pnh.param<std::string>("map_file", map_file_override, "");
+        ROS_INFO("Loading config from: %s", config_file.c_str());
+    #endif
 
         // Initialize command file path to /tmp/odin_command.txt
         g_command_file_path = "/tmp/odin_command.txt";
@@ -1900,6 +1912,14 @@ int main(int argc, char *argv[])
         };
 
         g_relocalization_map_abs_path = get_key_str_value("relocalization_map_abs_path", "");
+        if (!map_file_override.empty()) {
+            g_relocalization_map_abs_path = map_file_override;
+            #ifdef ROS2
+                RCLCPP_INFO(node->get_logger(), "Relocalization map overridden by launch: %s", g_relocalization_map_abs_path.c_str());
+            #else
+                ROS_INFO("Relocalization map overridden by launch: %s", g_relocalization_map_abs_path.c_str());
+            #endif
+        }
         g_mapping_result_dest_dir = get_key_str_value("mapping_result_dest_dir", "");
         g_mapping_result_file_name = get_key_str_value("mapping_result_file_name", "");
         g_image_mask_abs_path = get_key_str_value("image_mask_abs_path", "");
