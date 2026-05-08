@@ -51,4 +51,4 @@ register_keys:
 
   sendimagemask: 0
   image_mask_abs_path: ""
-  resetalgo: 1
+  resetalgo: 0
