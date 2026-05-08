@@ -348,13 +348,13 @@ static void signal_handler(int signum) {
             odinDevice = nullptr;
         }
 
-        // Deinitialize lidar system
+        // lidar_system_deinit() crashes on Ctrl+C with this SDK version after
+        // stream shutdown. Leave system teardown to process exit.
         #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Deinitializing lidar system...");
+            RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Skipping lidar system deinit during signal shutdown");
         #else
-            ROS_INFO("Deinitializing lidar system...");
+            ROS_INFO("Skipping lidar system deinit during signal shutdown");
         #endif
-        lidar_system_deinit();
 
         // Close CSV file
         if (dev_status_csv_file) {
@@ -363,14 +363,9 @@ static void signal_handler(int signum) {
             dev_status_csv_file = nullptr;
         }
 
-        // Shutdown ROS
-        #ifdef ROS2
-            rclcpp::shutdown();
-        #else
-            ros::shutdown();
-        #endif
-
-        exit(0);
+        // Avoid ROS/SDK static teardown on the signal path; SDK deinit above is
+        // intentionally skipped after host-owned threads and files are stopped.
+        _exit(0);
     }
 }
 
