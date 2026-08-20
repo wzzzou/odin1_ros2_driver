@@ -1,7 +1,7 @@
 # Odin1 建图模式配置。
 # 绑定关系：custom_map_mode: 1 = SLAM 建图模式。
 # 保存地图时不要直接退出驱动，另开终端执行：
-# cd /home/wzoun/E_Drive/Linux_Data/Workspace/ros2/odin_ws/src/odin_ros_driver && ./set_param.sh save_map 1
+# cd <odin_ws>/src/odin_ros_driver && ./set_param.sh save_map 1
 
 register_keys:
   strict_usb3.0_check: 1

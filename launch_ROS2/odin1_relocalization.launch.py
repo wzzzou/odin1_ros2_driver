@@ -114,6 +114,7 @@ def launch_setup(context, *args, **kwargs):
     config_file = os.path.join(package_dir, 'config', 'control_relocalization.yaml')
     cli_map_file = LaunchConfiguration('map_file').perform(context).strip()
     rviz_config = LaunchConfiguration('rviz_config').perform(context)
+    launch_rviz = LaunchConfiguration('launch_rviz').perform(context)
 
     source, map_file, error = resolve_map_file(cli_map_file, config_file, package_dir)
     if error:
@@ -129,6 +130,7 @@ def launch_setup(context, *args, **kwargs):
                 'config_file': config_file,
                 'rviz_config': rviz_config,
                 'map_file': map_file,
+                'launch_rviz': launch_rviz,
             }.items(),
         ),
     ]
@@ -150,8 +152,15 @@ def generate_launch_description():
         description='Path to RViz2 config file, or auto for normal relocalization RViz.',
     )
 
+    launch_rviz_arg = DeclareLaunchArgument(
+        'launch_rviz',
+        default_value='true',
+        description='是否随该 launch 启动 RViz2。',
+    )
+
     return LaunchDescription([
         map_file_arg,
         rviz_config_arg,
+        launch_rviz_arg,
         OpaqueFunction(function=launch_setup),
     ])
