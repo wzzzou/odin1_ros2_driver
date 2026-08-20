@@ -51,10 +51,28 @@ register_keys:
   # 可用范围通常为 1-1000，推荐值 400。
   imu_smooth_frequency: 400
 
-  # 是否发布 Odin1 内部算法输出的里程计。
+  # 是否发布 Odin1 内部算法输出的标准里程计。
   # 0: 不发布。
-  # 1: 发布 /odin1/odometry 和 /odin1/odometry_highfreq。
+  # 1: 发布 /odin1/odometry。
   sendodom: 1
+
+  # 是否发布高频里程计。
+  # 0: 不发布 /odin1/odometry_highfreq，远程 RViz/录屏通常不需要。
+  # 1: 发布 /odin1/odometry_highfreq。
+  # 依赖：sendodom 为 1。
+  sendodomhighfreq: 1
+
+  # 是否发布/处理 SDK 的额外 odom TF 数据。
+  # 0: 不发布该数据。里程计模式远程 RViz 通常不需要。
+  # 1: 发布该数据。重定位模式可能依赖它判断重定位成功。
+  # 注意：当前 SDK 不支持用公开 stream API 单独关闭该内部队列。
+  sendodomtfstream: 1
+
+  # 是否发布 SDK WIWC 外参数据。
+  # 0: 不发布 /odin1/wiwc，远程录屏通常不需要。
+  # 1: 发布 /odin1/wiwc。
+  # 注意：当前 SDK 不支持用公开 stream API 单独关闭该内部队列。
+  sendwiwc: 1
 
   # 是否发布 odom -> odin1_base_link 的 TF。
   # 0: 不发布 TF，只发布 Odometry 消息。
@@ -143,6 +161,11 @@ register_keys:
   # 1: 保存更多调试日志。排障时可开启，正常运行可保持 0。
   save_log: 0
 
+  # SDK 控制台日志级别。
+  # 0: ERROR；1: WARN；2: INFO；3: DEBUG。
+  # 远程录屏时建议设为 0，避免 SDK 内部队列 warning 刷屏影响终端和回调处理。
+  sdk_log_level: 0
+
   # 是否发布原始 DTOF 强度灰度图。
   # 0: 不发布。
   # 1: 发布 /odin1/image/intensity_gray，主要用于调试 DTOF 强度分布。
@@ -166,7 +189,8 @@ register_keys:
   custom_map_mode: 0
 
   # 初始位姿参数，格式通常为 [x, y, z, qx, qy, qz, qw]。
-  # 当前代码和文档均标注为暂未使用，保留默认值即可。
+  # 代码会把 custom_ 前缀去掉后作为 SDK 参数 init_pos 下发给设备。
+  # 是否能改善指定初始位姿重定位，需要结合地图和真实起点验证。
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
   # 重定位初始位姿搜索范围。
   custom_init_pose_search_radius: 4.0

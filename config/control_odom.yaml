@@ -1,7 +1,7 @@
 # Odin1 里程计模式配置。
 # 绑定关系：custom_map_mode: 0 = Odometry 里程计模式。
 # 启动示例：
-# ros2 launch odin_ros_driver odin1_ros2.launch.py config_file:=/home/wzoun/E_Drive/Linux_Data/Workspace/ros2/odin_ws/src/odin_ros_driver/config/control_odom.yaml
+# ros2 launch odin_ros_driver odin1_odom.launch.py
 
 register_keys:
   strict_usb3.0_check: 1
@@ -17,6 +17,9 @@ register_keys:
   imu_smooth_frequency: 400
 
   sendodom: 1
+  sendodomhighfreq: 1
+  sendodomtfstream: 1
+  sendwiwc: 1
   send_odom_baselink_tf: 1
 
   senddtof: 1
@@ -37,9 +40,10 @@ register_keys:
   recorddata: 0
   devstatuslog: 1
   save_log: 0
+  sdk_log_level: 0
 
   pubintensitygray: 0
-  showpath: 0
+  showpath: 1
   showcamerapose: 0
 
   custom_map_mode: 0
