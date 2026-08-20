@@ -359,13 +359,35 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         message_filters
     )
 
+    add_executable(static_pcd_map_publisher src/static_pcd_map_publisher.cpp)
+    target_link_libraries(static_pcd_map_publisher
+        ${PCL_LIBRARIES}
+    )
+    ament_target_dependencies(static_pcd_map_publisher
+        rclcpp
+        sensor_msgs
+        pcl_conversions
+    )
+
+    add_executable(cloud_downsample_relay src/cloud_downsample_relay.cpp)
+    target_link_libraries(cloud_downsample_relay
+        ${PCL_LIBRARIES}
+    )
+    ament_target_dependencies(cloud_downsample_relay
+        rclcpp
+        sensor_msgs
+        pcl_conversions
+    )
+
     # Installation rules - ensure all install targets are defined before ament_package()
     # Install executable
-    install(TARGETS 
-        host_sdk_sample 
+    install(TARGETS
+        host_sdk_sample
         pcd2depth_ros2_node
         cloud_reprojection_ros2_node
         image_overlay_node
+        static_pcd_map_publisher
+        cloud_downsample_relay
         EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
@@ -394,6 +416,16 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config")
         install(DIRECTORY config/
             DESTINATION share/${PROJECT_NAME}/config
+        )
+    endif()
+
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/script/start_odin1_nuc_headless.bash")
+        install(PROGRAMS
+            script/start_odin1_nuc_headless.bash
+            script/start_odin1_local_rviz.zsh
+            script/odin_remote_topic_relay.py
+            script/odin_compressed_image_relay.py
+            DESTINATION share/${PROJECT_NAME}/script
         )
     endif()
     
@@ -444,4 +476,3 @@ message(STATUS "Target platform: ${TARGET_PLATFORM}")
 message(STATUS "lydHostApi library: ${LYD_HOST_API_LIB}")
 message(STATUS "libusb library: ${LIBUSB_LIBRARIES}")
 message(STATUS "=======================================")
-
