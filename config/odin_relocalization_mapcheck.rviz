@@ -55,8 +55,8 @@ Visualization Manager:
       Displays:
         - Class: rviz_default_plugins/PointCloud2
           Alpha: 0.18
-          Channel Name: rgb
-          Color Transformer: RGB8
+          Color: 180; 220; 255
+          Color Transformer: FlatColor
           Decay Time: 0
           Enabled: true
           Name: map_cloud_reference
@@ -78,7 +78,7 @@ Visualization Manager:
           Channel Name: rgb
           Color Transformer: RGB8
           Decay Time: 0
-          Enabled: true
+          Enabled: false
           Name: map_cloud_local
           Position Transformer: XYZ
           Size (Pixels): 2
@@ -92,7 +92,7 @@ Visualization Manager:
             Reliability Policy: Reliable
             Value: /odin1/map_cloud_local
           Use Fixed Frame: true
-          Value: true
+          Value: false
         - Class: rviz_default_plugins/PointCloud2
           Alpha: 1
           Channel Name: rgb
