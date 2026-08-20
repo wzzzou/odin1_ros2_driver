@@ -5,6 +5,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -59,7 +60,7 @@ def clean_library_path():
                 ros_library_paths.append(lib_path)
 
     existing_paths = os.environ.get('LD_LIBRARY_PATH', '').split(os.pathsep)
-    ordered_paths = system_libusb_paths + ros_library_paths + existing_paths
+    ordered_paths = ros_library_paths + existing_paths + system_libusb_paths
     clean_paths = []
 
     for path in ordered_paths:
@@ -143,7 +144,8 @@ def launch_setup(context, *args, **kwargs):
         executable='rviz2',
         name='rviz2',
         output='screen',
-        arguments=['-d', rviz_config]
+        arguments=['-d', rviz_config],
+        condition=IfCondition(LaunchConfiguration('launch_rviz')),
     )
 
     actions = [
@@ -177,9 +179,16 @@ def generate_launch_description():
         description='Override relocalization map .bin file path; empty uses YAML value'
     )
 
+    launch_rviz_arg = DeclareLaunchArgument(
+        'launch_rviz',
+        default_value='true',
+        description='是否随该 launch 启动 RViz2'
+    )
+
     return LaunchDescription([
         config_file_arg,
         rviz_config_arg,
         map_file_arg,
+        launch_rviz_arg,
         OpaqueFunction(function=launch_setup),
     ])
