@@ -119,6 +119,9 @@ int g_sendrgb = 1;
 int g_sendimu = 1;
 int g_senddtof = 1;
 int g_sendodom = 1;
+int g_sendodom_highfreq = 1;
+int g_sendodom_tf_stream = 1;
+int g_sendwiwc = 1;
 int g_send_odom_baselink_tf = 0;
 
 // SDK IMU smooth sending configuration
@@ -136,8 +139,14 @@ int g_show_camerapose = 0;
 int g_strict_usb3_0_check = 0;
 int g_use_host_ros_time = 0;
 int g_save_log = 0;
+int g_sdk_log_level = LIDAR_LOG_INFO;
 int g_cloud_raw_confidence_threshold = 35;
 int g_dtof_fps = 145;  // DTOF sensor frame rate: 100 (10fps) or 145 (14.5fps)
+
+static bool need_rgb_stream()
+{
+    return g_sendrgb || g_sendrgb_compressed || g_sendrgb_undistort || g_sendcloudrender || g_record_data;
+}
 
 std::filesystem::path log_root_dir_;
 int g_custom_map_mode = 0;
@@ -919,7 +928,7 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             printf("empty lidar data type: %x\n", data->type);
             break;
         case LIDAR_DT_RAW_RGB:
-            if (g_sendrgb) {
+            if (need_rgb_stream()) {
                 g_ros_object->publishRgb((capture_Image_List_t *)&data->stream);
             }
             update_count(&rgb_rx_fps);
@@ -1111,7 +1120,7 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             break;
             case LIDAR_DT_SLAM_ODOMETRY_HIGHFREQ:
             {
-                if (g_sendodom) {
+                if (g_sendodom && g_sendodom_highfreq) {
                     g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::HIGHFREQ, false, false);
                 }
                 update_count(&slam_odom_highfreq_rx_fps);
@@ -1119,7 +1128,7 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             break;
             case LIDAR_DT_SLAM_ODOMETRY_TF:
             {
-                if (g_custom_map_mode == 2) {
+                if (g_sendodom_tf_stream && g_custom_map_mode == 2) {
                     g_ros_object->publishOdometry((capture_Image_List_t *)&data->stream, OdometryType::TRANSFORM, false, false);
                     if (!g_relocalization_success_msg_printed) {
                     #ifdef ROS2
@@ -1134,8 +1143,9 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             break;
             case LIDAR_DT_SLAM_WIWC:
             {
-                // Always publish WIWC data for real-time extrinsics
-                g_ros_object->publishWiwc((capture_Image_List_t *)&data->stream);
+                if (g_sendwiwc) {
+                    g_ros_object->publishWiwc((capture_Image_List_t *)&data->stream);
+                }
                 
                 if(g_record_data ) {
                     g_ros_object->recordrotate((capture_Image_List_t *)&data->stream);
@@ -1698,14 +1708,14 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
         // 根据配置激活或关闭流类型
         #ifdef ROS2
             RCLCPP_INFO(rclcpp::get_logger("device_cb"), 
-                "Stream config: RGB=%d, IMU=%d, ODOM=%d, DTOF=%d, CLOUD_SLAM=%d",
-                g_sendrgb, g_sendimu, g_sendodom, g_senddtof, g_sendcloudslam);
+                "Stream config: RGB_STREAM=%d, RGB_RAW=%d, RGB_COMPRESSED=%d, IMU=%d, ODOM=%d, ODOM_HIGHFREQ=%d, ODOM_TF_STREAM=%d, WIWC=%d, DTOF=%d, CLOUD_SLAM=%d",
+                need_rgb_stream(), g_sendrgb, g_sendrgb_compressed, g_sendimu, g_sendodom, g_sendodom_highfreq, g_sendodom_tf_stream, g_sendwiwc, g_senddtof, g_sendcloudslam);
         #else
-            ROS_INFO("Stream config: RGB=%d, IMU=%d, ODOM=%d, DTOF=%d, CLOUD_SLAM=%d",
-                g_sendrgb, g_sendimu, g_sendodom, g_senddtof, g_sendcloudslam);
+            ROS_INFO("Stream config: RGB_STREAM=%d, RGB_RAW=%d, RGB_COMPRESSED=%d, IMU=%d, ODOM=%d, ODOM_HIGHFREQ=%d, ODOM_TF_STREAM=%d, WIWC=%d, DTOF=%d, CLOUD_SLAM=%d",
+                need_rgb_stream(), g_sendrgb, g_sendrgb_compressed, g_sendimu, g_sendodom, g_sendodom_highfreq, g_sendodom_tf_stream, g_sendwiwc, g_senddtof, g_sendcloudslam);
         #endif
         
-        if (g_sendrgb) {
+        if (need_rgb_stream()) {
             lidar_activate_stream_type(odinDevice, LIDAR_DT_RAW_RGB);
         } else {
             lidar_deactivate_stream_type(odinDevice, LIDAR_DT_RAW_RGB);
@@ -1881,6 +1891,9 @@ int main(int argc, char *argv[])
         g_rosNodeControlImpl.setCloudRawConfidenceThreshold(g_cloud_raw_confidence_threshold);
         g_dtof_fps      = get_key_value("dtof_fps", 145);  // Read DTOF frame rate from config (100=10fps, 145=14.5fps)
         g_sendodom      = get_key_value("sendodom", 1);
+        g_sendodom_highfreq = get_key_value("sendodomhighfreq", 1);
+        g_sendodom_tf_stream = get_key_value("sendodomtfstream", 1);
+        g_sendwiwc = get_key_value("sendwiwc", 1);
         g_send_odom_baselink_tf = get_key_value("send_odom_baselink_tf", 0);
         g_sendcloudslam = get_key_value("sendcloudslam", 0);
         g_sendcloudrender = get_key_value("sendcloudrender", 1);
@@ -1893,6 +1906,7 @@ int main(int argc, char *argv[])
         g_show_path = get_key_value("showpath", 0);
         g_show_camerapose = get_key_value("showcamerapose", 0);
         g_log_level = get_key_value("log_devel", LOG_LEVEL_INFO);
+        g_sdk_log_level = get_key_value("sdk_log_level", LIDAR_LOG_INFO);
         g_strict_usb3_0_check = get_key_value("strict_usb3.0_check", 1);
         g_use_host_ros_time = get_key_value("use_host_ros_time", 0);
         g_save_log = get_key_value("save_log", 0);
@@ -1923,7 +1937,12 @@ int main(int argc, char *argv[])
         g_reset_algo = get_key_value("resetalgo", 0);
         g_custom_map_mode = g_parser->getCustomMapMode(2);
 
-        lidar_log_set_level(LIDAR_LOG_INFO);
+        if (g_sdk_log_level < LIDAR_LOG_ERROR) {
+            g_sdk_log_level = LIDAR_LOG_ERROR;
+        } else if (g_sdk_log_level > LIDAR_LOG_DEBUG) {
+            g_sdk_log_level = LIDAR_LOG_INFO;
+        }
+        lidar_log_set_level(static_cast<lidar_log_level_e>(g_sdk_log_level));
 
         const std::string package_name = "odin_ros_driver";
         std::string data_dir = "";
@@ -1987,6 +2006,7 @@ int main(int argc, char *argv[])
             #endif
             return -1;
         }
+        lidar_log_set_level(static_cast<lidar_log_level_e>(g_sdk_log_level));
         
         // Configure SDK IMU smooth sending AFTER lidar_system_init
         // SDK now defaults to disabled, only enable if configured

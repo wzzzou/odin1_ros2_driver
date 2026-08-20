@@ -69,6 +69,9 @@ enum class OdometryType {
 
 
 extern int g_log_level;
+extern int g_sendrgb;
+extern int g_sendrgb_compressed;
+extern int g_sendrgb_undistort;
 extern int g_sendcloudrender;
 extern int g_use_host_ros_time;
 double get_ptp_smoothed_delay();
@@ -762,30 +765,16 @@ void publishRgb(capture_Image_List_t *stream) {
         #else
             ROS_INFO("old format rgb data, please upgrade device firmware");
         #endif
-    } else {// new version jpeg data
+    } else { // new version jpeg data
 
         std::vector<uint8_t> jpeg_data(static_cast<uint8_t*>(image.pAddr),
                                         static_cast<uint8_t*>(image.pAddr) + image.length);
 
-        // convert back to bgr8                                                
-        cv::Mat decoded_image = cv::imdecode(jpeg_data, cv::IMREAD_COLOR);
-
-        cv_bridge::CvImage cv_image;
         #ifdef ROS2
-            cv_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
+            auto image_stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
         #else
-            cv_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
+            auto image_stamp = make_aligned_stamp(stream->imageList[0].timestamp);
         #endif
-        cv_image.encoding = "bgr8";
-        cv_image.image = decoded_image;
-
-        if (g_sendcloudrender) {
-            std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
-            if (rgb_image_queue_.size() >= 10) {
-                rgb_image_queue_.pop_front();
-            }
-            rgb_image_queue_.push_back(cv_image.toImageMsg());
-            }        
 
         // Enqueue binary logging for image
         if (data_logger_) {
@@ -805,50 +794,81 @@ void publishRgb(capture_Image_List_t *stream) {
             data_logger_->enqueueImageFrame(std::move(blob));
         }
 
+        #ifdef ROS2
+        if (g_sendrgb_compressed) {
+            sensor_msgs::msg::CompressedImage jpeg_msg;
+            jpeg_msg.header.stamp = image_stamp;
+            jpeg_msg.format = "jpeg";
+            jpeg_msg.data = jpeg_data;
+            compressed_rgb_pub_->publish(jpeg_msg);
+        }
+        #else
+        if (g_sendrgb_compressed) {
+            sensor_msgs::CompressedImagePtr jpeg_msg(new sensor_msgs::CompressedImage());
+            jpeg_msg->header.stamp = image_stamp;
+            jpeg_msg->format = "jpeg";
+            jpeg_msg->data = jpeg_data;
+            compressed_rgb_pub_.publish(jpeg_msg);
+        }
+        #endif
+
+        const bool need_decoded_image = g_sendrgb || g_sendrgb_undistort || g_sendcloudrender;
+        if (!need_decoded_image) {
+            return;
+        }
+
+        // convert back to bgr8 only when a raw/undistorted/render path needs it
+        cv::Mat decoded_image = cv::imdecode(jpeg_data, cv::IMREAD_COLOR);
+        if (decoded_image.empty()) {
+            #ifdef ROS2
+                RCLCPP_WARN(rclcpp::get_logger("publishRgb"), "Failed to decode JPEG RGB image");
+            #else
+                ROS_WARN("Failed to decode JPEG RGB image");
+            #endif
+            return;
+        }
+
+        cv_bridge::CvImage cv_image;
+        cv_image.header.stamp = image_stamp;
+        cv_image.encoding = "bgr8";
+        cv_image.image = decoded_image;
+
+        if (g_sendcloudrender) {
+            std::lock_guard<std::mutex> lock(rgb_queue_mutex_);
+            if (rgb_image_queue_.size() >= 10) {
+                rgb_image_queue_.pop_front();
+            }
+            rgb_image_queue_.push_back(cv_image.toImageMsg());
+        }
+
         // undistort image
-        cv::Mat undistorted_image = cv::Mat::zeros(decoded_image.size(), decoded_image.type());
         cv_bridge::CvImage cv_undistorted_image;
 
-        if (m_undistort_map_init_success) {
+        if (g_sendrgb_undistort && m_undistort_map_init_success) {
+            cv::Mat undistorted_image = cv::Mat::zeros(decoded_image.size(), decoded_image.type());
             cv::remap(decoded_image, undistorted_image, m_undistort_map_x, m_undistort_map_y, cv::INTER_LINEAR);
-            #ifdef ROS2
-                cv_undistorted_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
-            #else
-                cv_undistorted_image.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
-            #endif
+            cv_undistorted_image.header.stamp = image_stamp;
             cv_undistorted_image.encoding = "bgr8";
             cv_undistorted_image.image = undistorted_image;
         }
 
         #ifdef ROS2
         {
-            rgb_pub_->publish(*cv_image.toImageMsg());
-            if (m_undistort_map_init_success) {
+            if (g_sendrgb) {
+                rgb_pub_->publish(*cv_image.toImageMsg());
+            }
+            if (g_sendrgb_undistort && m_undistort_map_init_success) {
                 undistort_rgb_pub_->publish(*cv_undistorted_image.toImageMsg());
             }
-
-            // original jpeg - always publish as it's small
-            sensor_msgs::msg::CompressedImage jpeg_msg;
-            jpeg_msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
-            jpeg_msg.format = "jpeg";
-            jpeg_msg.data = jpeg_data;
-
-            compressed_rgb_pub_->publish(jpeg_msg);
         }
         #else
         {
-            rgb_pub_.publish(cv_image.toImageMsg());
-            if (m_undistort_map_init_success) {
+            if (g_sendrgb) {
+                rgb_pub_.publish(cv_image.toImageMsg());
+            }
+            if (g_sendrgb_undistort && m_undistort_map_init_success) {
                 undistort_rgb_pub_.publish(cv_undistorted_image.toImageMsg());
             }
-
-            // original jpeg
-            sensor_msgs::CompressedImagePtr jpeg_msg(new sensor_msgs::CompressedImage());
-            jpeg_msg->header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
-            jpeg_msg->format = "jpeg";
-            jpeg_msg->data = jpeg_data;
-
-            compressed_rgb_pub_.publish(jpeg_msg);
         }
         #endif
     }
@@ -1674,6 +1694,13 @@ private:
                                     .reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE)
                                     .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
 
+            // Compressed camera frames are only for visualization in remote mode.
+            // Keep depth 1 and BEST_EFFORT so a large JPEG frame can be dropped
+            // instead of blocking the SDK callback thread and starving SLAM data.
+            auto qos_image_drop = rclcpp::QoS(1)
+                                    .reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT)
+                                    .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
+
             imu_pub_ = node_->create_publisher<ros::Imu>("odin1/imu", qos_small);
             rgb_pub_ = node_->create_publisher<ros::Image>("odin1/image", qos_sensor);
             cloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_raw", qos_sensor);
@@ -1683,7 +1710,7 @@ private:
             path_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/path", qos_sensor);
             pub_camera_pose_visual_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/camera_pose_visual", qos_sensor);
             rgbcloud_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("odin1/cloud_render", qos_sensor);
-            compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", qos_small);
+            compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", qos_image_drop);
             undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", qos_sensor);
             intensity_gray_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/intensity_gray", qos_sensor);
             wiwc_publisher_ = node_->create_publisher<ros::Odometry>("odin1/wiwc", qos_small);
