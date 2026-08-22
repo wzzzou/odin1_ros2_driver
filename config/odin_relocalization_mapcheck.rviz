@@ -158,7 +158,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 30; 30; 36
-    Fixed Frame: map
+    Fixed Frame: odin1_map
     Frame Rate: 10
   Name: root
   Tools:

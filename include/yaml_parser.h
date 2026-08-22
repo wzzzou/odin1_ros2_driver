@@ -96,7 +96,12 @@ private:
         "image_mask_abs_path",
         "overlay_reprojected_topic",
         "overlay_camera_topic",
-        "overlay_output_topic"
+        "overlay_output_topic",
+        "map_frame",
+        "odom_frame",
+        "imu_frame",
+        "lidar_frame",
+        "camera_frame"
     };
 
     // Keys whose YAML value is a floating-point number (not int).

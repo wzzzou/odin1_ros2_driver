@@ -172,7 +172,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 30; 30; 36
-    Fixed Frame: odom
+    Fixed Frame: odin1_odom
     Frame Rate: 30
   Name: root
   Tools:

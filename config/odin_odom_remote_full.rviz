@@ -86,9 +86,13 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        odin1_base_link:
+        odin1_camera:
           Value: true
-        odom:
+        odin1_imu:
+          Value: true
+        odin1_lidar:
+          Value: true
+        odin1_odom:
           Value: true
       Marker Scale: 0.6000000238418579
       Name: tf_frames
@@ -96,15 +100,18 @@ Visualization Manager:
       Show Axes: true
       Show Names: false
       Tree:
-        odom:
-          odin1_base_link:
+        odin1_odom:
+          odin1_camera:
             {}
+          odin1_imu:
+            odin1_lidar:
+              {}
       Update Interval: 0
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: odom
+    Fixed Frame: odin1_odom
     Frame Rate: 20
   Name: root
   Tools:

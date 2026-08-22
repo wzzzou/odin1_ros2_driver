@@ -12,6 +12,14 @@ register_keys:
   # 建议：默认保持 0，避免主机调度延迟影响传感器时间。
   use_host_ros_time: 0
 
+  # ROS 消息与 TF 使用的 Frame。代码默认值保持上游命名；本项目显式加 odin1_ 前缀，
+  # 防止接入整车时与主定位链的 map/odom/imu/lidar/camera_0 冲突。
+  map_frame: "odin1_map"
+  odom_frame: "odin1_odom"
+  imu_frame: "odin1_imu"
+  lidar_frame: "odin1_lidar"
+  camera_frame: "odin1_camera"
+
   # 主数据流控制开关。
   # 0: 不启动流控。
   # 1: 启动流控。正常使用必须保持 1。
@@ -31,7 +39,7 @@ register_keys:
   # 是否发布去畸变后的 RGB 图像。
   # 0: 不发布。
   # 1: 发布 /odin1/image/undistorted。
-  # 依赖：sendrgb 必须为 1，并且 config/calib.yaml 中需要有当前设备标定。
+  # 依赖：运行目录中的 calib.yaml 需要包含当前设备标定；无需同时发布解码原图。
   # 用途：视觉检测、投影融合、算法使用针孔模型时建议开启。
   sendrgbundistort: 0
 
@@ -68,13 +76,13 @@ register_keys:
   # 注意：当前 SDK 不支持用公开 stream API 单独关闭该内部队列。
   sendodomtfstream: 1
 
-  # 是否发布 SDK WIWC 外参数据。
+  # 是否发布 SDK WIWC 外参话题。
   # 0: 不发布 /odin1/wiwc，远程录屏通常不需要。
   # 1: 发布 /odin1/wiwc。
-  # 注意：当前 SDK 不支持用公开 stream API 单独关闭该内部队列。
+  # 注意：驱动仍会消费 WIWC 来维护 imu -> lidar 外参 TF。
   sendwiwc: 1
 
-  # 是否发布 odom -> odin1_base_link 的 TF。
+  # 是否发布 odin1_odom -> odin1_imu -> odin1_lidar 及相机 TF。
   # 0: 不发布 TF，只发布 Odometry 消息。
   # 1: 发布 TF。
   # 注意：RViz 显示 /odin1/cloud_raw、/odin1/cloud_render 时通常需要该 TF，建议保持 1。
@@ -82,7 +90,7 @@ register_keys:
 
   # 是否发布原始 DTOF 点云。
   # 0: 不发布。
-  # 1: 发布 /odin1/cloud_raw，frame_id 为 odin1_base_link。
+  # 1: 发布 /odin1/cloud_raw，frame_id 为 lidar_frame。
   senddtof: 1
 
   # 原始点云置信度过滤阈值。
@@ -102,7 +110,7 @@ register_keys:
 
   # 是否发布 Odin1 内部 SLAM 点云。
   # 0: 不发布。
-  # 1: 发布 /odin1/cloud_slam，frame_id 为 odom。
+  # 1: 发布 /odin1/cloud_slam，frame_id 为 odom_frame。
   sendcloudslam: 1
 
   # 是否发布 RGB 着色后的点云。

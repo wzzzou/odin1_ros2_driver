@@ -52,6 +52,7 @@ bool YamlParser::loadConfig() {
         YAML::Node register_keys = config["register_keys"];
         register_keys_.clear();
         register_keys_str_val_.clear();
+        register_keys_float_val_.clear();
         custom_parameters_.clear();
 
         // Print number of key-value pairs found

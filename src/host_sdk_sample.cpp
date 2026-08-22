@@ -156,6 +156,13 @@ int g_sdk_log_level = LIDAR_LOG_INFO;
 int g_cloud_raw_confidence_threshold = 35;
 int g_dtof_fps = 145;  // DTOF sensor frame rate: 100 (10fps) or 145 (14.5fps)
 
+// 保持上游默认值；本项目配置显式使用 odin1_*，避免接入整车时与主链冲突。
+std::string g_map_frame = "map";
+std::string g_odom_frame = "odom";
+std::string g_imu_frame = "imu";
+std::string g_lidar_frame = "lidar";
+std::string g_camera_frame = "camera_0";
+
 static bool need_rgb_stream()
 {
     return g_sendrgb || g_sendrgb_compressed || g_sendrgb_undistort || g_sendcloudrender || g_record_data;
@@ -1222,9 +1229,8 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
             break;
             case LIDAR_DT_SLAM_WIWC:
             {
-                if (g_sendwiwc) {
-                    g_ros_object->publishWiwc((capture_Image_List_t *)&data->stream);
-                }
+                // WIWC 同时提供 TF 所需外参；始终处理，只按配置控制话题发布。
+                g_ros_object->publishWiwc((capture_Image_List_t *)&data->stream);
                 
                 if(g_record_data ) {
                     g_ros_object->recordrotate((capture_Image_List_t *)&data->stream);
@@ -2299,6 +2305,31 @@ int main(int argc, char *argv[])
             return it != keys.end() ? it->second : default_value;
         };
 
+        auto get_key_str_value = [&](const std::string& key, const std::string& default_value) -> std::string {
+            auto it = keys_w_str_val.find(key);
+            if (it == keys_w_str_val.end() || it->second.empty()) {
+                return default_value;
+            }
+            return it->second;
+        };
+
+        g_map_frame = get_key_str_value("map_frame", "map");
+        g_odom_frame = get_key_str_value("odom_frame", "odom");
+        g_imu_frame = get_key_str_value("imu_frame", "imu");
+        g_lidar_frame = get_key_str_value("lidar_frame", "lidar");
+        g_camera_frame = get_key_str_value("camera_frame", "camera_0");
+
+        #ifdef ROS2
+            RCLCPP_INFO(node->get_logger(),
+                "Frame config: map=%s odom=%s imu=%s lidar=%s camera=%s",
+                g_map_frame.c_str(), g_odom_frame.c_str(), g_imu_frame.c_str(),
+                g_lidar_frame.c_str(), g_camera_frame.c_str());
+        #else
+            ROS_INFO("Frame config: map=%s odom=%s imu=%s lidar=%s camera=%s",
+                g_map_frame.c_str(), g_odom_frame.c_str(), g_imu_frame.c_str(),
+                g_lidar_frame.c_str(), g_camera_frame.c_str());
+        #endif
+
         g_sendrgb       = get_key_value("sendrgb", 1);
         g_sendimu       = get_key_value("sendimu", 1);
         g_senddtof      = get_key_value("senddtof", 1);
@@ -2339,11 +2370,6 @@ int main(int argc, char *argv[])
         #ifdef ROS2
         g_ros_object->startTfExtraPublishTimer();
         #endif
-
-        auto get_key_str_value = [&](const std::string& key, const std::string& default_value) -> std::string {
-            auto it = keys_w_str_val.find(key);
-            return it != keys_w_str_val.end() ? it->second : default_value;
-        };
 
         g_relocalization_map_abs_path = get_key_str_value("relocalization_map_abs_path", "");
         if (!map_file_override.empty()) {

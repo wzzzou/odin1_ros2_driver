@@ -23,6 +23,7 @@ limitations under the License.
 #include <signal.h>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <iomanip>
 #include <cstring>
 #include <opencv2/opencv.hpp>
@@ -82,8 +83,14 @@ extern int g_log_level;
 extern int g_sendrgb;
 extern int g_sendrgb_compressed;
 extern int g_sendrgb_undistort;
+extern int g_sendwiwc;
 extern int g_sendcloudrender;
 extern int g_use_host_ros_time;
+extern std::string g_map_frame;
+extern std::string g_odom_frame;
+extern std::string g_imu_frame;
+extern std::string g_lidar_frame;
+extern std::string g_camera_frame;
 double get_ptp_smoothed_delay();
 double get_ptp_smoothed_offset();
 #ifdef ROS2
@@ -325,7 +332,7 @@ public:
         #else
             imu_msg.header.stamp = make_aligned_stamp(stream->stamp);
         #endif
-        imu_msg.header.frame_id = "imu";
+        imu_msg.header.frame_id = g_imu_frame;
 
         imu_msg.linear_acceleration.y = -1 * stream->accel_x;
         imu_msg.linear_acceleration.x = stream->accel_y;
@@ -581,7 +588,7 @@ void process_pair(const ImageConstPtr &rgb_msg, const PointCloud2ConstPtr &pcd_m
          
         // Create and publish RGB point cloud
         PointCloud2Msg output_msg;
-        output_msg.header.frame_id = "lidar";
+        output_msg.header.frame_id = g_lidar_frame;
         output_msg.header.stamp = rgb_msg->header.stamp; // Use original image timestamp
         output_msg.height = 1;
         output_msg.width = valid_point_num;
@@ -650,7 +657,7 @@ void publishIntensityCloud(capture_Image_List_t* stream, int idx)
     #endif
 
     // Set message header
-    msg->header.frame_id = "lidar";
+    msg->header.frame_id = g_lidar_frame;
     #ifdef ROS2
         msg->header.stamp = make_aligned_stamp(cloud.timestamp, node_);
     #else
@@ -780,7 +787,7 @@ void publishGrayUInt8(capture_Image_List_t *stream, int idx) {
     #else
         msg.header.stamp = make_aligned_stamp(stream->imageList[idx].timestamp);
     #endif
-    msg.header.frame_id = "map";
+    msg.header.frame_id = g_map_frame;
 
     int width = stream->imageList[idx].width;
     int height = stream->imageList[idx].height;
@@ -848,6 +855,7 @@ void publishRgb(capture_Image_List_t *stream) {
         if (g_sendrgb_compressed) {
             sensor_msgs::msg::CompressedImage jpeg_msg;
             jpeg_msg.header.stamp = image_stamp;
+            jpeg_msg.header.frame_id = g_camera_frame;
             jpeg_msg.format = "jpeg";
             jpeg_msg.data = jpeg_data;
             compressed_rgb_pub_->publish(jpeg_msg);
@@ -856,6 +864,7 @@ void publishRgb(capture_Image_List_t *stream) {
         if (g_sendrgb_compressed) {
             sensor_msgs::CompressedImagePtr jpeg_msg(new sensor_msgs::CompressedImage());
             jpeg_msg->header.stamp = image_stamp;
+            jpeg_msg->header.frame_id = g_camera_frame;
             jpeg_msg->format = "jpeg";
             jpeg_msg->data = jpeg_data;
             compressed_rgb_pub_.publish(jpeg_msg);
@@ -880,6 +889,7 @@ void publishRgb(capture_Image_List_t *stream) {
 
         cv_bridge::CvImage cv_image;
         cv_image.header.stamp = image_stamp;
+        cv_image.header.frame_id = g_camera_frame;
         cv_image.encoding = "bgr8";
         cv_image.image = decoded_image;
 
@@ -898,6 +908,7 @@ void publishRgb(capture_Image_List_t *stream) {
             cv::Mat undistorted_image = cv::Mat::zeros(decoded_image.size(), decoded_image.type());
             cv::remap(decoded_image, undistorted_image, m_undistort_map_x, m_undistort_map_y, cv::INTER_LINEAR);
             cv_undistorted_image.header.stamp = image_stamp;
+            cv_undistorted_image.header.frame_id = g_camera_frame;
             cv_undistorted_image.encoding = "bgr8";
             cv_undistorted_image.image = undistorted_image;
         }
@@ -930,7 +941,7 @@ void publishRgb(capture_Image_List_t *stream) {
     {
         #ifdef ROS2
                 sensor_msgs::msg::PointCloud2 msg;
-                msg.header.frame_id = "odom";
+                msg.header.frame_id = g_odom_frame;
                 msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp, node_);
 
                 //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "Point cloudrgba %ld",stream->imageList[0].timestamp);
@@ -958,7 +969,7 @@ void publishRgb(capture_Image_List_t *stream) {
                 sensor_msgs::PointCloud2Iterator<float> iter_rgb(msg, "rgb");
         #else
             sensor_msgs::PointCloud2 msg;
-            msg.header.frame_id = "odom";
+            msg.header.frame_id = g_odom_frame;
             msg.header.stamp = make_aligned_stamp(stream->imageList[0].timestamp);
             
             size_t pt_size = sizeof(int32_t) * 3 + sizeof(int32_t) * 4;
@@ -1206,11 +1217,11 @@ void publishRgb(capture_Image_List_t *stream) {
 #ifdef ROS2
         auto msg = nav_msgs::msg::Odometry();
         msg.header.stamp = make_aligned_stamp(odom_data->timestamp_ns, node_);
-        msg.header.frame_id = "odom";
+        msg.header.frame_id = g_odom_frame;
 #else
         nav_msgs::Odometry msg;
         msg.header.stamp = make_aligned_stamp(odom_data->timestamp_ns);
-        msg.header.frame_id = "odom";
+        msg.header.frame_id = g_odom_frame;
 #endif
         
         // Store T_CL in pose.covariance (first 16 elements)
@@ -1241,11 +1252,13 @@ void publishRgb(capture_Image_List_t *stream) {
             msg.twist.covariance[i] = 0.0;
         }
         
-#ifdef ROS2
-        wiwc_publisher_->publish(msg);
-#else
-        wiwc_publisher_.publish(msg);
-#endif
+        if (g_sendwiwc) {
+            #ifdef ROS2
+            wiwc_publisher_->publish(msg);
+            #else
+            wiwc_publisher_.publish(msg);
+            #endif
+        }
 
         // Cache extrinsics for til/wc TF computation in publishOdometry
         {
@@ -1285,8 +1298,8 @@ void publishRgb(capture_Image_List_t *stream) {
             ros::Odometry msg;
 #endif
         
-            msg.header.frame_id = "odom";
-            msg.child_frame_id = "imu";
+            msg.header.frame_id = g_odom_frame;
+            msg.child_frame_id = g_imu_frame;
 
             //RCLCPP_INFO(rclcpp::get_logger("device_cb"), "odom %ld",odom_data->timestamp_ns);
 
@@ -1377,8 +1390,8 @@ void publishRgb(capture_Image_List_t *stream) {
                     if (getRosNodeControl()->sendOdomBaseLinkTF()) {
                         geometry_msgs::msg::TransformStamped transformStamped;
                         transformStamped.header.stamp = msg.header.stamp;
-                        transformStamped.header.frame_id = "odom";
-                        transformStamped.child_frame_id = "imu";
+                        transformStamped.header.frame_id = g_odom_frame;
+                        transformStamped.child_frame_id = g_imu_frame;
                         transformStamped.transform.translation.x = msg.pose.pose.position.x;
                         transformStamped.transform.translation.y = msg.pose.pose.position.y;
                         transformStamped.transform.translation.z = msg.pose.pose.position.z;
@@ -1422,8 +1435,8 @@ void publishRgb(capture_Image_List_t *stream) {
                                 q_til.normalize();
 
                                 geometry_msgs::msg::TransformStamped tf_til;
-                                tf_til.header.frame_id = "imu";
-                                tf_til.child_frame_id = "lidar";
+                                tf_til.header.frame_id = g_imu_frame;
+                                tf_til.child_frame_id = g_lidar_frame;
                                 tf_til.transform.translation.x = cached_T_base_lidar_(0, 3);
                                 tf_til.transform.translation.y = cached_T_base_lidar_(1, 3);
                                 tf_til.transform.translation.z = cached_T_base_lidar_(2, 3);
@@ -1452,8 +1465,8 @@ void publishRgb(capture_Image_List_t *stream) {
                                 q_wc.normalize();
 
                                 geometry_msgs::msg::TransformStamped tf_wc;
-                                tf_wc.header.frame_id = "odom";
-                                tf_wc.child_frame_id = "camera_0";
+                                tf_wc.header.frame_id = g_odom_frame;
+                                tf_wc.child_frame_id = g_camera_frame;
                                 tf_wc.transform.translation.x = T_wc(0, 3);
                                 tf_wc.transform.translation.y = T_wc(1, 3);
                                 tf_wc.transform.translation.z = T_wc(2, 3);
@@ -1555,8 +1568,8 @@ void publishRgb(capture_Image_List_t *stream) {
                     {
                     geometry_msgs::msg::TransformStamped transformStamped;
                     transformStamped.header.stamp = msg.header.stamp;
-                    transformStamped.header.frame_id = "odom";
-                    transformStamped.child_frame_id = "map";
+                    transformStamped.header.frame_id = g_odom_frame;
+                    transformStamped.child_frame_id = g_map_frame;
                     transformStamped.transform.translation.x = msg.pose.pose.position.x;
                     transformStamped.transform.translation.y = msg.pose.pose.position.y;
                     transformStamped.transform.translation.z = msg.pose.pose.position.z;
@@ -1575,8 +1588,8 @@ void publishRgb(capture_Image_List_t *stream) {
                     if (getRosNodeControl()->sendOdomBaseLinkTF()) {
                         geometry_msgs::TransformStamped transformStamped;
                         transformStamped.header.stamp = msg.header.stamp;
-                        transformStamped.header.frame_id = "odom";
-                        transformStamped.child_frame_id = "imu";
+                        transformStamped.header.frame_id = g_odom_frame;
+                        transformStamped.child_frame_id = g_imu_frame;
                         transformStamped.transform.translation.x = msg.pose.pose.position.x;
                         transformStamped.transform.translation.y = msg.pose.pose.position.y;
                         transformStamped.transform.translation.z = msg.pose.pose.position.z;
@@ -1595,8 +1608,8 @@ void publishRgb(capture_Image_List_t *stream) {
 
                             geometry_msgs::TransformStamped tf_til;
                             tf_til.header.stamp = msg.header.stamp;
-                            tf_til.header.frame_id = "imu";
-                            tf_til.child_frame_id = "lidar";
+                            tf_til.header.frame_id = g_imu_frame;
+                            tf_til.child_frame_id = g_lidar_frame;
                             tf_til.transform.translation.x = cached_T_base_lidar_(0, 3);
                             tf_til.transform.translation.y = cached_T_base_lidar_(1, 3);
                             tf_til.transform.translation.z = cached_T_base_lidar_(2, 3);
@@ -1627,8 +1640,8 @@ void publishRgb(capture_Image_List_t *stream) {
 
                             geometry_msgs::TransformStamped tf_wc;
                             tf_wc.header.stamp = msg.header.stamp;
-                            tf_wc.header.frame_id = "odom";
-                            tf_wc.child_frame_id = "camera_0";
+                            tf_wc.header.frame_id = g_odom_frame;
+                            tf_wc.child_frame_id = g_camera_frame;
                             tf_wc.transform.translation.x = T_wc(0, 3);
                             tf_wc.transform.translation.y = T_wc(1, 3);
                             tf_wc.transform.translation.z = T_wc(2, 3);
@@ -1705,8 +1718,8 @@ void publishRgb(capture_Image_List_t *stream) {
                     {
                     geometry_msgs::TransformStamped transformStamped;
                     transformStamped.header.stamp = msg.header.stamp;
-                    transformStamped.header.frame_id = "odom";
-                    transformStamped.child_frame_id = "map";
+                    transformStamped.header.frame_id = g_odom_frame;
+                    transformStamped.child_frame_id = g_map_frame;
                     transformStamped.transform.translation.x = msg.pose.pose.position.x;
                     transformStamped.transform.translation.y = msg.pose.pose.position.y;
                     transformStamped.transform.translation.z = msg.pose.pose.position.z;
@@ -1921,8 +1934,8 @@ private:
 
     void initialize_publishers() {
         #ifdef ROS2
-            // Small data with queue depth 1
-            auto qos_small = rclcpp::QoS(4000)
+            // 高频小消息保持可靠传输，但只保留最新一帧，避免慢订阅端形成反压。
+            auto qos_small = rclcpp::QoS(1)
                                     .reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE)
                                     .durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
 
@@ -1942,7 +1955,7 @@ private:
             rgb_pub_ = node_->create_publisher<ros::Image>("odin1/image", qos_sensor);
             cloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_raw", qos_sensor);
             xyzrgbacloud_pub_ = node_->create_publisher<ros::PointCloud2>("odin1/cloud_slam", qos_sensor);
-            odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", qos_sensor);
+            odom_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry", qos_small);
             odom_highfreq_publisher_ = node_->create_publisher<ros::Odometry>("odin1/odometry_highfreq", qos_small);
             path_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/path", qos_sensor);
             pub_camera_pose_visual_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>("odin1/camera_pose_visual", qos_sensor);
@@ -1950,7 +1963,7 @@ private:
             compressed_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::CompressedImage>("odin1/image/compressed", qos_image_drop);
             undistort_rgb_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/undistorted", qos_sensor);
             intensity_gray_pub_ = node_->create_publisher<sensor_msgs::msg::Image>("odin1/image/intensity_gray", qos_sensor);
-            wiwc_publisher_ = node_->create_publisher<ros::Odometry>("odin1/wiwc", qos_sensor);
+            wiwc_publisher_ = node_->create_publisher<ros::Odometry>("odin1/wiwc", qos_small);
             tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
         #endif
     }
@@ -2001,8 +2014,8 @@ public:
                         geometry_msgs::msg::TransformStamped tf_til;
                         tf_til.header.stamp.sec = sec;
                         tf_til.header.stamp.nanosec = nanosec;
-                        tf_til.header.frame_id = "imu";
-                        tf_til.child_frame_id = "lidar";
+                        tf_til.header.frame_id = g_imu_frame;
+                        tf_til.child_frame_id = g_lidar_frame;
                         tf_til.transform.translation.x = cached_T_base_lidar_(0, 3);
                         tf_til.transform.translation.y = cached_T_base_lidar_(1, 3);
                         tf_til.transform.translation.z = cached_T_base_lidar_(2, 3);

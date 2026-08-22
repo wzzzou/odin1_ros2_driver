@@ -89,7 +89,7 @@ def launch_setup(context, *args, **kwargs):
                 parameters=[{
                     'pcd_map_file': pcd_map_file,
                     'topic_name': '/odin1/map_cloud',
-                    'frame_id': 'map',
+                    'frame_id': 'odin1_map',
                 }],
             )
         )

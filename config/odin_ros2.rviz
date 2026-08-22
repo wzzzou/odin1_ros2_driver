@@ -392,9 +392,13 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        imu:
+        odin1_camera:
           Value: true
-        odom:
+        odin1_imu:
+          Value: true
+        odin1_lidar:
+          Value: true
+        odin1_odom:
           Value: true
       Marker Scale: 1
       Name: TF
@@ -402,15 +406,18 @@ Visualization Manager:
       Show Axes: true
       Show Names: false
       Tree:
-        odom:
-          imu:
+        odin1_odom:
+          odin1_camera:
             {}
+          odin1_imu:
+            odin1_lidar:
+              {}
       Update Interval: 0
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: odom
+    Fixed Frame: odin1_odom
     Frame Rate: 30
   Name: root
   Tools:
@@ -469,7 +476,7 @@ Visualization Manager:
       Name: Current View
       Near Clip Distance: 0.009999999776482582
       Pitch: 0.3953983187675476
-      Target Frame: odom
+      Target Frame: odin1_odom
       Value: Orbit (rviz)
       Yaw: 3.230407953262329
     Saved: ~

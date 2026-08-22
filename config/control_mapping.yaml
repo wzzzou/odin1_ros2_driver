@@ -6,6 +6,13 @@
 register_keys:
   strict_usb3.0_check: 1
   use_host_ros_time: 0
+
+  map_frame: "odin1_map"
+  odom_frame: "odin1_odom"
+  imu_frame: "odin1_imu"
+  lidar_frame: "odin1_lidar"
+  camera_frame: "odin1_camera"
+
   streamctrl: 1
 
   sendrgbcompressed: 1
@@ -17,7 +24,11 @@ register_keys:
   imu_smooth_frequency: 400
 
   sendodom: 1
+  sendodomhighfreq: 1
+  sendodomtfstream: 1
+  sendwiwc: 1
   send_odom_baselink_tf: 1
+  tf_extra_publish_rate: 0
 
   senddtof: 1
   cloud_raw_confidence_threshold: 35
@@ -37,6 +48,7 @@ register_keys:
   recorddata: 1
   devstatuslog: 1
   save_log: 0
+  sdk_log_level: 0
 
   pubintensitygray: 0
   showpath: 1
@@ -44,6 +56,8 @@ register_keys:
 
   custom_map_mode: 1
   custom_init_pos: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+  custom_init_pose_search_radius: 4.0
+  custom_init_pose_max_rot_deg: 180.0
   relocalization_map_abs_path: ""
 
   mapping_result_dest_dir: ""

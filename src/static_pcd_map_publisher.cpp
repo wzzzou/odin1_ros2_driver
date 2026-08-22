@@ -14,7 +14,7 @@ public:
         : Node("static_pcd_map_publisher", options)
     {
         pcd_map_file_ = this->declare_parameter<std::string>("pcd_map_file", "");
-        frame_id_ = this->declare_parameter<std::string>("frame_id", "map");
+        frame_id_ = this->declare_parameter<std::string>("frame_id", "odin1_map");
         topic_name_ = this->declare_parameter<std::string>("topic_name", "/odin1/map_cloud");
 
         publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
