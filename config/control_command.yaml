@@ -12,8 +12,8 @@ register_keys:
   # 建议：默认保持 0，避免主机调度延迟影响传感器时间。
   use_host_ros_time: 0
 
-  # ROS 消息与 TF 使用的 Frame。代码默认值保持上游命名；本项目显式加 odin1_ 前缀，
-  # 防止接入整车时与主定位链的 map/odom/imu/lidar/camera_0 冲突。
+  # ROS 消息与 TF 使用的 Frame。五项均为必填，缺失或为空时驱动拒绝启动；
+  # 本项目显式加 odin1_ 前缀，防止与主定位链的 map/odom/imu/lidar/camera_0 冲突。
   map_frame: "odin1_map"
   odom_frame: "odin1_odom"
   imu_frame: "odin1_imu"

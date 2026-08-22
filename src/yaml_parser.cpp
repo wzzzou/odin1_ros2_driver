@@ -151,6 +151,29 @@ bool YamlParser::loadConfig() {
             }
         }
 
+        // Frame 名会直接进入消息 header 和 /tf。缺键时拒绝启动，避免静默回退到
+        // map/odom/imu/lidar/camera_0 后污染整车 TF 树。
+        const char* required_frame_keys[] = {
+            "map_frame",
+            "odom_frame",
+            "imu_frame",
+            "lidar_frame",
+            "camera_frame",
+        };
+        bool frame_config_valid = true;
+        for (const char* key : required_frame_keys) {
+            const auto value_it = register_keys_str_val_.find(key);
+            if (value_it == register_keys_str_val_.end() ||
+                value_it->second.find_first_not_of(" \t\r\n") == std::string::npos) {
+                std::cerr << "缺少或为空的必填 Frame 配置: register_keys."
+                          << key << std::endl;
+                frame_config_valid = false;
+            }
+        }
+        if (!frame_config_valid) {
+            return false;
+        }
+
         return true;
     } catch (const YAML::Exception& e) {
         std::cerr << "YAML exception: " << e.what() << std::endl;

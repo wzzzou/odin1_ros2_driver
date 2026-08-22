@@ -156,12 +156,12 @@ int g_sdk_log_level = LIDAR_LOG_INFO;
 int g_cloud_raw_confidence_threshold = 35;
 int g_dtof_fps = 145;  // DTOF sensor frame rate: 100 (10fps) or 145 (14.5fps)
 
-// 保持上游默认值；本项目配置显式使用 odin1_*，避免接入整车时与主链冲突。
-std::string g_map_frame = "map";
-std::string g_odom_frame = "odom";
-std::string g_imu_frame = "imu";
-std::string g_lidar_frame = "lidar";
-std::string g_camera_frame = "camera_0";
+// 防御初始化值使用隔离命名；配置加载仍要求五个 Frame 键全部显式给出。
+std::string g_map_frame = "odin1_map";
+std::string g_odom_frame = "odin1_odom";
+std::string g_imu_frame = "odin1_imu";
+std::string g_lidar_frame = "odin1_lidar";
+std::string g_camera_frame = "odin1_camera";
 
 static bool need_rgb_stream()
 {
@@ -2251,6 +2251,30 @@ int main(int argc, char *argv[])
              "/odin1/get_ae /odin1/get_awb /odin1/set_ae /odin1/set_awb");
 #endif
 
+    // 配置校验发生在 SDK 初始化前。早退时必须显式按依赖顺序释放 ROS 对象，
+    // 否则全局 g_ros_object 会在 FastDDS participant 退出后才析构并触发段错误。
+    auto cleanup_ros_after_startup_failure = [&]() {
+    #ifdef ROS2
+        srv_set_awb.reset();
+        srv_set_ae.reset();
+        srv_get_awb.reset();
+        srv_get_ae.reset();
+        g_ros_object.reset();
+        node.reset();
+        rclcpp::shutdown();
+    #else
+        srv_set_awb.shutdown();
+        srv_set_ae.shutdown();
+        srv_get_awb.shutdown();
+        srv_get_ae.shutdown();
+        if (g_ros_object) {
+            delete g_ros_object;
+            g_ros_object = nullptr;
+        }
+        ros::shutdown();
+    #endif
+    };
+
     // Register signal handlers for Ctrl+C
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
@@ -2293,6 +2317,7 @@ int main(int argc, char *argv[])
             #else
                 ROS_ERROR("Failed to load config file: %s", config_file.c_str());
             #endif
+            cleanup_ros_after_startup_failure();
             return -1;
         }
 
@@ -2313,11 +2338,12 @@ int main(int argc, char *argv[])
             return it->second;
         };
 
-        g_map_frame = get_key_str_value("map_frame", "map");
-        g_odom_frame = get_key_str_value("odom_frame", "odom");
-        g_imu_frame = get_key_str_value("imu_frame", "imu");
-        g_lidar_frame = get_key_str_value("lidar_frame", "lidar");
-        g_camera_frame = get_key_str_value("camera_frame", "camera_0");
+        // loadConfig() 已对五个必填键做非空校验，此处不允许默认回退。
+        g_map_frame = keys_w_str_val.at("map_frame");
+        g_odom_frame = keys_w_str_val.at("odom_frame");
+        g_imu_frame = keys_w_str_val.at("imu_frame");
+        g_lidar_frame = keys_w_str_val.at("lidar_frame");
+        g_camera_frame = keys_w_str_val.at("camera_frame");
 
         #ifdef ROS2
             RCLCPP_INFO(node->get_logger(),
