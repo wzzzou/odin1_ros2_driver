@@ -77,6 +77,18 @@ Visualization Manager:
             Reliability Policy: Reliable
             Value: /odin1/odometry_highfreq
           Value: false
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: odom_path
+          Namespaces:
+            odom_trajectory: true
+          Topic:
+            Depth: 10
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /odin1/path
+          Value: true
       Enabled: true
       Name: Odometry
       Value: true
