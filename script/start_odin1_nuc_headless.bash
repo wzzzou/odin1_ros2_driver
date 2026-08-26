@@ -49,6 +49,35 @@ cd "${ODIN_WORKSPACE}"
 source install/setup.bash
 set -u
 
+ODIN_PACKAGE_PREFIX="$(ros2 pkg prefix odin_ros_driver)"
+ODIN_PACKAGE_SHARE="${ODIN_PACKAGE_PREFIX}/share/odin_ros_driver"
+ODIN_PACKAGE_LIBEXEC="${ODIN_PACKAGE_PREFIX}/lib/odin_ros_driver"
+ODIN_WORKSPACE_INSTALL="$(realpath -m "${ODIN_WORKSPACE}/install")"
+ODIN_PACKAGE_PREFIX_REAL="$(realpath -m "${ODIN_PACKAGE_PREFIX}")"
+
+case "${ODIN_PACKAGE_PREFIX_REAL}" in
+    "${ODIN_WORKSPACE_INSTALL}"|"${ODIN_WORKSPACE_INSTALL}"/*) ;;
+    *)
+        echo "当前 overlay 不属于 ODIN_WORKSPACE，拒绝混用：${ODIN_PACKAGE_PREFIX_REAL}" >&2
+        exit 1
+        ;;
+esac
+
+if [[ ! -d "${ODIN_PACKAGE_SHARE}" || ! -d "${ODIN_PACKAGE_LIBEXEC}" ]]; then
+    echo "当前 overlay 中的 odin_ros_driver 安装不完整：${ODIN_PACKAGE_PREFIX}" >&2
+    exit 1
+fi
+
+if [[ "${ODIN_ENABLE_REMOTE_RELAY}" == "1" && ! -f "${ODIN_PACKAGE_SHARE}/script/odin_remote_topic_relay.py" ]]; then
+    echo "找不到已安装的远程图像中继：${ODIN_PACKAGE_SHARE}/script/odin_remote_topic_relay.py" >&2
+    exit 1
+fi
+
+if [[ "${ODIN_ENABLE_CLOUD_RELAY}" == "1" && ! -x "${ODIN_PACKAGE_LIBEXEC}/cloud_downsample_relay" ]]; then
+    echo "找不到已安装的点云中继：${ODIN_PACKAGE_LIBEXEC}/cloud_downsample_relay" >&2
+    exit 1
+fi
+
 export ROS_DOMAIN_ID="${ODIN_ROS_DOMAIN_ID}"
 export ROS_LOCALHOST_ONLY=0
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
@@ -73,7 +102,7 @@ done
 
 if [[ "${ODIN_REMOTE_LIGHT_CONFIG}" == "1" && "${HAS_CONFIG_FILE_ARG}" == "0" && "${ODIN_LAUNCH_FILE}" == "odin1_odom.launch.py" ]]; then
     REMOTE_CONFIG="/tmp/odin1_odom_remote_light.yaml"
-    BASE_CONFIG="${ODIN_WORKSPACE}/install/odin_ros_driver/share/odin_ros_driver/config/control_odom.yaml"
+    BASE_CONFIG="${ODIN_PACKAGE_SHARE}/config/control_odom.yaml"
     cp "${BASE_CONFIG}" "${REMOTE_CONFIG}"
     sed -i 's/^  sendrgb:.*/  sendrgb: 0/' "${REMOTE_CONFIG}"
     if [[ "${ODIN_ENABLE_REMOTE_IMAGE}" == "1" ]]; then
@@ -106,7 +135,7 @@ trap cleanup EXIT INT TERM
 
 if [[ "${ODIN_ENABLE_CLOUD_RELAY}" == "1" ]]; then
     echo "启动点云降采样中继：/odin1/cloud_slam -> /odin1/cloud_slam_lite (voxel=${ODIN_VOXEL_LEAF_SIZE}m)"
-    "${ODIN_WORKSPACE}/install/odin_ros_driver/lib/odin_ros_driver/cloud_downsample_relay" \
+    "${ODIN_PACKAGE_LIBEXEC}/cloud_downsample_relay" \
         --ros-args -p voxel_leaf_size:="${ODIN_VOXEL_LEAF_SIZE}" &
     RELAY_PIDS+=("$!")
 fi
@@ -117,7 +146,7 @@ if [[ "${ODIN_ENABLE_REMOTE_RELAY}" == "1" ]]; then
         REMOTE_IMAGE_PARAM="true"
     fi
     echo "启动远程图像中继：/odin1/image/compressed -> /odin1/image_remote/compressed (image=${ODIN_ENABLE_REMOTE_IMAGE})"
-    python3 "${ODIN_WORKSPACE}/src/odin_ros_driver/script/odin_remote_topic_relay.py" \
+    python3 "${ODIN_PACKAGE_SHARE}/script/odin_remote_topic_relay.py" \
         --ros-args \
         -p enable_pose:=false \
         -p enable_image:="${REMOTE_IMAGE_PARAM}" \
