@@ -432,7 +432,16 @@ static void signal_handler(int signum) {
             ros::shutdown();
         #endif
 
-        exit(0);
+        // 用 _exit() 而非 exit()：exit() 会运行 atexit 回调与静态对象析构器，而此刻
+        // 可能仍有未 join 的线程（例如 lidar_save_map 的 detach 线程，最长 120 秒）
+        // 在运行，属于典型的 exit-time race。上面的 g_ros_object.reset() +
+        // shutdown() 已经显式完成 ROS 侧的有序拆除，剩余资源交给内核回收即可。
+        //
+        // 注意：这里只收敛静态析构阶段，不要连带删除上面的 lidar_stop_stream() 和
+        // lidar_system_deinit()。上游 v0.14 的清理顺序是 DECISIONS.md（2026-08-23）
+        // 的既有决策，已由真机 SIGINT 5/5 + SIGTERM 5/5 验证，与旧 SDK 分支
+        // 5511f1c 的"跳过 deinit"绕过是两回事。
+        _exit(0);
     }
 }
 
