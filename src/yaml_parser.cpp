@@ -19,7 +19,43 @@ limitations under the License.
 #include <iomanip>
 
 #include <cstring>
+#include <stdexcept>
 namespace odin_ros_driver {
+
+namespace {
+
+// yaml-cpp accepts plain numeric/boolean scalars through as<std::string>().
+// Frame IDs are part of the local configuration contract and must be textual;
+// accept quoted/explicit strings and ordinary non-numeric plain identifiers,
+// but reject YAML values that resolve as bool or number.
+bool is_string_frame_scalar(const YAML::Node& node) {
+    if (!node.IsScalar()) {
+        return false;
+    }
+
+    const std::string tag = node.Tag();
+    if (tag == "!" || tag == "tag:yaml.org,2002:str") {
+        return true;
+    }
+
+    if (tag == "?") {
+        try {
+            (void)node.as<bool>();
+            return false;
+        } catch (const std::exception&) {
+        }
+        try {
+            (void)node.as<double>();
+            return false;
+        } catch (const std::exception&) {
+        }
+        return true;
+    }
+
+    return false;
+}
+
+}  // namespace
 
 YamlParser::YamlParser(const std::string& config_file)
     : config_file_(config_file) {}
@@ -125,7 +161,19 @@ bool YamlParser::loadConfig() {
                 }
             } else if (allowed_key_w_str_val.find(key) != allowed_key_w_str_val.end()) {
                 try {
+                    if (!is_string_frame_scalar(value_node) &&
+                        (key == "map_frame" || key == "odom_frame" ||
+                         key == "imu_frame" || key == "lidar_frame" ||
+                         key == "camera_frame")) {
+                        throw std::runtime_error("Frame value must be a YAML string scalar");
+                    }
                     std::string value = value_node.as<std::string>();
+                    if ((key == "map_frame" || key == "odom_frame" ||
+                         key == "imu_frame" || key == "lidar_frame" ||
+                         key == "camera_frame") &&
+                        value.find_first_of(" \t\r\n") != std::string::npos) {
+                        throw std::runtime_error("Frame value must not contain whitespace");
+                    }
                     register_keys_str_val_[key] = value;
                     std::cerr << "Loaded key: " << key << " = " << value << std::endl;
                 } catch (const std::exception& e) {
