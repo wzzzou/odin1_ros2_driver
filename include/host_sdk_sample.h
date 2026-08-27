@@ -46,6 +46,7 @@ limitations under the License.
 #include "lidar_api.h"
 #include "lidar_api_type.h"
 #include "rawCloudRender.h"
+#include "odin_local/host_time_align.hpp"  // ODIN_LOCAL_TIME_ALIGN
 #include <deque> 
 #include <mutex>  
 #include <vector> 
@@ -206,11 +207,13 @@ inline uint64_t ros_time_to_ns(const ros::Time &t) {
 //   g_use_host_ros_time == 0 : raw sensor timestamp (odin1 boot time, no alignment)
 //   g_use_host_ros_time == 1 : host wall-clock now (NTP-synced if the host is NTP-synced)
 //   g_use_host_ros_time == 2 : sensor timestamp aligned via smoothed PTP offset (NTP/PTP mode)
-//
-//   g_use_host_ros_time == 0 :
-//   g_use_host_ros_time == 1 : 
-//   g_use_host_ros_time == 2 : 
+//   g_use_host_ros_time == 3 : ODIN_LOCAL_TIME_ALIGN 本地扩展，见
+//                              include/odin_local/host_time_align.hpp
 inline uint64_t aligned_stamp_ns(uint64_t sensor_timestamp_ns) {
+    // ODIN_LOCAL_TIME_ALIGN
+    if (g_use_host_ros_time == odin_local::kHostAlignedMode) {
+        return odin_local::aligner().align(sensor_timestamp_ns);
+    }
     if (g_use_host_ros_time == 1) {
         const auto now = std::chrono::system_clock::now().time_since_epoch();
         return static_cast<uint64_t>(
@@ -231,6 +234,10 @@ inline ros::Time make_aligned_stamp(uint64_t sensor_timestamp_ns
                                     , const rclcpp::Node::SharedPtr& node
 #endif
                                     ) {
+    // ODIN_LOCAL_TIME_ALIGN
+    if (g_use_host_ros_time == odin_local::kHostAlignedMode) {
+        return ns_to_ros_time(odin_local::aligner().align(sensor_timestamp_ns));
+    }
     if (g_use_host_ros_time == 1) {
         #ifdef ROS2
             return node->now();

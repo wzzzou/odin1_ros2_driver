@@ -5,7 +5,17 @@
 
 register_keys:
   strict_usb3.0_check: 1
-  use_host_ros_time: 0
+  # 时间戳时基（2026-08-27 真机实测，固件 0.13.1 + 驱动 0.14.0）：
+  #   0 = 设备开机相对戳。时序最好，但与主机 Unix 时间差约 56 年，
+  #       任何使用主机时钟的 ROS 节点（TF/Nav2/rosbag 回放）都无法与之融合。
+  #   1 = 回调内取主机墙钟。对齐了，但把 USB 传输与调度延迟计入时间戳，
+  #       实测 odom 抖动 0.029ms -> 10.918ms、imu 0.025ms -> 0.770ms。
+  #   2 = 设备戳减 PTP offset。语义错误：PTP offset 是"设备/主机 Unix 时钟差"，
+  #       与开机相对时基不同源，实测输出仍差约 52 年。不要使用。
+  #   3 = 本地扩展（见 include/odin_local/host_time_align.hpp）。窗口最小值
+  #       标定 + 限速跟踪，实测 imu skew 0.000s、jitter 与模式 0 持平、
+  #       残余漂移 <11ppm。需要与其他 ROS 节点融合时用这个。
+  use_host_ros_time: 3
 
   map_frame: "odin1_map"
   odom_frame: "odin1_odom"
