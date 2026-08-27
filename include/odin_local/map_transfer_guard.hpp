@@ -4,7 +4,7 @@
 问题（2026-08-27 真机实证）
 ------------------------------------------------------------------
 官方在 process_command_file() 里用 detach 线程执行 lidar_save_map()
-（SDK 默认生成超时 120 秒），而 signal_handler 不检查传输状态，直接把
+（SDK 默认生成超时 120 秒），而上游退出路径不检查传输状态，直接把
 odinDevice 置空、调用 lidar_system_deinit() 并退出进程。
 
 实测复现：建图 45 秒后触发 save_map=1，在 "Map save triggered" 后 4 毫秒
@@ -64,8 +64,8 @@ public:
     // 轮询等待传输结束。is_running 由调用方提供（读官方的
     // g_map_transfer_in_progress）。返回 true 表示已结束，false 表示超时。
     //
-    // 注意：本函数在 signal handler 上下文中被调用，只做 sleep 与原子读，
-    // 不分配内存、不取锁竞争激烈的资源。
+    // 本函数只在主线程有序退出路径中调用：sleep、std::function 与 clock 均不再
+    // 处于异步 signal handler 上下文。
     static bool wait_until_idle(const std::function<bool()>& is_running,
                                 double timeout_s = kWaitSeconds) {
         using clock = std::chrono::steady_clock;

@@ -15,7 +15,7 @@ limitations under the License.
 #include "yaml_parser.h"
 #include "odin_local/map_transfer_guard.hpp"  // ODIN_LOCAL_MAP_GUARD
 #include "odin_local/runtime_paths.hpp"        // ODIN_LOCAL_RUNTIME_PATHS
-#include "odin_local/signal_reentry.hpp"       // ODIN_LOCAL_SIGNAL_REENTRY
+#include "odin_local/shutdown_coordinator.hpp"  // ODIN_LOCAL_SHUTDOWN_COORDINATOR
 #include "rawCloudRender.h"
 #include "odin_calib_path.h"
 #include <filesystem> 
@@ -76,7 +76,9 @@ static std::mutex device_mutex;                      // Device operation mutex l
 static std::atomic<bool> g_connection_timeout(false);
 static std::atomic<bool> g_map_transfer_in_progress(false);  // True while a map file transfer is running
 static std::atomic<bool> g_usb_version_error(false);
-static std::atomic<bool> g_shutdown_requested(false);  // Signal handler flag
+static std::atomic<bool> g_sdk_initialized(false);
+static std::atomic<bool> g_stream_started(false);
+static std::atomic<int> g_device_callback_depth(0);
 #ifdef ROS2
     std::shared_ptr<MultiSensorPublisher> g_ros_object = nullptr;
 #else
@@ -331,36 +333,40 @@ void collect_children(pid_t pid, std::vector<pid_t>& all) {
 
 void clear_all_queues();
 static void stop_imu_thread();
+static void wait_for_device_callback_idle();
 
 static bool convert_calib_to_cam_in_ex(const std::string& calib_path, const std::filesystem::path& out_path);
 
-// Signal handler for Ctrl+C
-static void signal_handler(int signum) {
-    if (signum == SIGINT || signum == SIGTERM) {
-        // ODIN_LOCAL_SIGNAL_REENTRY: 官方用 signal() 注册，它只在执行期间屏蔽
-        // 同一个信号，SIGINT 与 SIGTERM 可以交叉进入同一个 handler。
-        // 2026-08-27 实测（P0 第 8 轮）：SIGTERM 的 handler 卡在
-        // lidar_system_deinit() 内 28.6 秒，期间 SIGINT 进入并并发执行同一段
-        // 清理——日志出现两次 "Deinitializing lidar system"，第二次因
-        // odinDevice 已被前一个 handler 置空而跳过了 "Closing device"。
-        // 判据与宽限期见 include/odin_local/signal_reentry.hpp。
-        switch (odin_local::reentry_guard().on_signal()) {
-            case odin_local::SignalReentryGuard::Action::kIgnore:
-                // 仍在宽限期内：让首个 handler 走完清理，不要退化成 kill -9。
-                return;
-            case odin_local::SignalReentryGuard::Action::kForceExit:
-                _exit(1);
-            case odin_local::SignalReentryGuard::Action::kProceed:
-                break;
+// ODIN_LOCAL_SHUTDOWN_COORDINATOR: 信号由 sigwait 线程同步接收；本函数只在
+// main 线程执行地图等待、线程 join、停流、SDK deinit 与 ROS shutdown。
+[[noreturn]] static void perform_orderly_shutdown() {
+    auto request = odin_local::shutdown_coordinator().snapshot();
+    if (request.reason == odin_local::ShutdownReason::kNone) {
+        (void)odin_local::shutdown_coordinator().request(
+            odin_local::ShutdownReason::kRosShutdown, 0);
+        request = odin_local::shutdown_coordinator().snapshot();
+    }
+    const int signum = request.signal_number;
+    {
+        if (request.reason == odin_local::ShutdownReason::kSignal) {
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger("shutdown_coordinator"),
+                            "Received signal %d, shutting down on main thread...", signum);
+            #else
+                ROS_INFO("Received signal %d, shutting down on main thread...", signum);
+            #endif
+        } else if (request.exit_code != 0) {
+            #ifdef ROS2
+                RCLCPP_ERROR(rclcpp::get_logger("shutdown_coordinator"),
+                             "Fatal shutdown requested: %s",
+                             odin_local::ShutdownCoordinator::reason_name(request.reason));
+            #else
+                ROS_ERROR("Fatal shutdown requested: %s",
+                          odin_local::ShutdownCoordinator::reason_name(request.reason));
+            #endif
         }
 
-        g_shutdown_requested = true;
-
-        #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Received signal %d, shutting down...", signum);
-        #else
-            ROS_INFO("Received signal %d, shutting down...", signum);
-        #endif
+        wait_for_device_callback_idle();
 
         // ODIN_LOCAL_MAP_GUARD: 必须在停流/置空 odinDevice/deinit 之前处理。
         // 地图传输跑在 detach 线程里并持有全局 odinDevice；若此时直接拆设备，
@@ -368,7 +374,7 @@ static void signal_handler(int signum) {
         // 之后的启动停在 "starting software connection"，必须断电才能恢复。
         if (g_map_transfer_in_progress.load()) {
             #ifdef ROS2
-                RCLCPP_WARN(rclcpp::get_logger("signal_handler"),
+                RCLCPP_WARN(rclcpp::get_logger("shutdown_coordinator"),
                             "Map transfer in progress, waiting up to %.0fs before shutdown...",
                             odin_local::MapTransferGuard::kWaitSeconds);
             #else
@@ -379,14 +385,14 @@ static void signal_handler(int signum) {
                 [] { return g_map_transfer_in_progress.load(); });
             if (finished) {
                 #ifdef ROS2
-                    RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Map transfer finished, continuing shutdown");
+                    RCLCPP_INFO(rclcpp::get_logger("shutdown_coordinator"), "Map transfer finished, continuing shutdown");
                 #else
                     ROS_INFO("Map transfer finished, continuing shutdown");
                 #endif
             } else {
                 const bool removed = odin_local::map_guard().cleanup_incomplete();
                 #ifdef ROS2
-                    RCLCPP_ERROR(rclcpp::get_logger("signal_handler"),
+                    RCLCPP_ERROR(rclcpp::get_logger("shutdown_coordinator"),
                                  "Map transfer did not finish in time; map is NOT saved.%s",
                                  removed ? " Removed the incomplete 0-byte file." : "");
                 #else
@@ -431,12 +437,13 @@ static void signal_handler(int signum) {
             }
 
             #ifdef ROS2
-                RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Closing device...");
+                RCLCPP_INFO(rclcpp::get_logger("shutdown_coordinator"), "Closing device...");
             #else
                 ROS_INFO("Closing device...");
             #endif
 
-            if (lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM))
+            if (g_stream_started.exchange(false, std::memory_order_acq_rel) &&
+                lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM))
             {
                 #ifdef ROS2
                     RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_stop_stream failed");
@@ -447,13 +454,14 @@ static void signal_handler(int signum) {
             odinDevice = nullptr;
         }
 
-        // Deinitialize lidar system
-        #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Deinitializing lidar system...");
-        #else
-            ROS_INFO("Deinitializing lidar system...");
-        #endif
-        lidar_system_deinit();
+        if (g_sdk_initialized.exchange(false, std::memory_order_acq_rel)) {
+            #ifdef ROS2
+                RCLCPP_INFO(rclcpp::get_logger("shutdown_coordinator"), "Deinitializing lidar system...");
+            #else
+                ROS_INFO("Deinitializing lidar system...");
+            #endif
+            lidar_system_deinit();
+        }
 
         // Close CSV file
         if (dev_status_csv_file) {
@@ -462,36 +470,17 @@ static void signal_handler(int signum) {
             dev_status_csv_file = nullptr;
         }
 
-        // 官方原本在此处 reset()/delete g_ros_object，注释说明其目的是：避免
-        // 全局 shared_ptr 被**静态析构器**在 rclcpp::shutdown() 之后销毁，从而
-        // 刷出大量 "Failed to delete datawriter" / "Error in destruction of rcl
-        // publisher handle" 噪声。
-        //
-        // ODIN_LOCAL_SIGNAL_REENTRY: 本文件末尾已改用 _exit()，静态析构器根本
-        // 不会运行，上述目的已自动达成，主动析构反而有害：lidar_system_deinit()
-        // 返回后 SDK 回调线程仍可能有在途调用访问 g_ros_object，此时析构
-        // publisher 会造成 use-after-free。2026-08-27 P0 复验 TERM round 2 实测
-        // 到一次 SIGSEGV（exit code -11），段错误正落在 "sdk deinit complete"
-        // 之后的这一区间。
-        //
-        // 因此不再主动拆 ROS 对象，只调用 shutdown() 让 DDS 对端及时感知，
-        // 其余交给进程退出由内核回收。
+        // ODIN_LOCAL_SHUTDOWN_COORDINATOR: deinit 后不主动析构 ROS 对象；SDK
+        // 仍可能有在途回调访问 publisher。_exit() 不运行静态析构，其余资源
+        // 由内核回收，避免复现 cdb7fe2 修掉的 deinit 后 SIGSEGV。
         #ifdef ROS2
             rclcpp::shutdown();
         #else
             ros::shutdown();
         #endif
 
-        // 用 _exit() 而非 exit()：exit() 会运行 atexit 回调与静态对象析构器，而此刻
-        // 可能仍有未 join 的线程（例如 lidar_save_map 的 detach 线程，最长 120 秒）
-        // 在运行，属于典型的 exit-time race。上面的 g_ros_object.reset() +
-        // shutdown() 已经显式完成 ROS 侧的有序拆除，剩余资源交给内核回收即可。
-        //
-        // 注意：这里只收敛静态析构阶段，不要连带删除上面的 lidar_stop_stream() 和
-        // lidar_system_deinit()。上游 v0.14 的清理顺序是 DECISIONS.md（2026-08-23）
-        // 的既有决策，已由真机 SIGINT 5/5 + SIGTERM 5/5 验证，与旧 SDK 分支
-        // 5511f1c 的"跳过 deinit"绕过是两回事。
-        _exit(0);
+        std::fflush(nullptr);
+        _exit(request.exit_code);
     }
 }
 
@@ -1345,8 +1334,34 @@ static void lidar_data_callback(const lidar_data_t *data, void *user_data)
     }
 }
 
+static void request_device_setup_failure() {
+    (void)odin_local::shutdown_coordinator().request(
+        odin_local::ShutdownReason::kDeviceSetupFailed, 1);
+}
+
+class DeviceCallbackScope {
+public:
+    DeviceCallbackScope() {
+        g_device_callback_depth.fetch_add(1, std::memory_order_acq_rel);
+    }
+    ~DeviceCallbackScope() {
+        g_device_callback_depth.fetch_sub(1, std::memory_order_acq_rel);
+    }
+};
+
+static void wait_for_device_callback_idle() {
+    while (g_device_callback_depth.load(std::memory_order_acquire) != 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 static void lidar_device_callback(const lidar_device_info_t* device, bool attach)
 {
+    DeviceCallbackScope callback_scope;
+    if (odin_local::shutdown_coordinator().requested()) {
+        return;
+    }
+
     int type = LIDAR_MODE_SLAM;
     // int type = LIDAR_MODE_RAW;
     static std::chrono::steady_clock::time_point software_connect_start; 
@@ -1367,8 +1382,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #endif
 
             g_usb_version_error = true;
-            system("pkill -f rviz");
-            exit(1);
+            (void)odin_local::shutdown_coordinator().request(
+                odin_local::ShutdownReason::kUsbTransport, 1);
             return;
         }
 
@@ -1385,6 +1400,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #else
                 ROS_ERROR("Create device failed");
             #endif
+            request_device_setup_failure();
             return;
         }
 	const std::string package_name = "odin_ros_driver";
@@ -1453,6 +1469,8 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             }
             
             g_connection_timeout = true;
+            (void)odin_local::shutdown_coordinator().request(
+                odin_local::ShutdownReason::kConnectionTimeout, 1);
             return;
         }
         
@@ -1463,11 +1481,10 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #else
                 ROS_ERROR("Failed to get device firmware version, potential incompatible, please upgrade device firmware and retry.");
             #endif
-            system("pkill -f rviz");
-            system("pkill -f host_sdk_sample");
-            exit(1);
-        }
-        else {
+            (void)odin_local::shutdown_coordinator().request(
+                odin_local::ShutdownReason::kFirmwareRead, 1);
+            return;
+        } else {
             #ifdef ROS2
                 RCLCPP_INFO(rclcpp::get_logger(__func__), "ros_driver_version:%s, recommended_firmware_version:%d.%d.%d", ros_driver_version, required_firmware_version_major, required_firmware_version_minor, required_firmware_version_patch);
                 RCLCPP_INFO(rclcpp::get_logger(__func__), "get version success.");
@@ -1502,9 +1519,9 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 #else
                     ROS_ERROR("The soc version is too low, please upgrade the device firmware to at least %d.%d.%d\n",required_firmware_version_major,required_firmware_version_minor,required_firmware_version_patch);
                 #endif
-                system("pkill -f rviz");
-                system("pkill -f host_sdk_sample");
-                exit(1);
+                (void)odin_local::shutdown_coordinator().request(
+                    odin_local::ShutdownReason::kFirmwareTooOld, 1);
+                return;
             }
         }
 
@@ -1518,6 +1535,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 lidar_close_device(odinDevice);
                 lidar_destory_device(odinDevice);
                 odinDevice = nullptr;
+                request_device_setup_failure();
                 return;
             }
 
@@ -1554,13 +1572,14 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 break;
             case LIDAR_DEVICE_STREAMING:
                 #ifdef ROS2
-                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Device state: streaming, this should not happen, exitting...");
+                    RCLCPP_WARN(rclcpp::get_logger("device_cb"), "Device state: streaming, this should not happen, exiting through coordinated cleanup...");
                 #else
-                    ROS_WARN("Device state: streaming, this should not happen, exitting...");
+                    ROS_WARN("Device state: streaming, this should not happen, exiting through coordinated cleanup...");
                 #endif
-                system("pkill -f rviz");
-                exit(1);
-                break;
+                g_stream_started.store(true, std::memory_order_release);
+                (void)odin_local::shutdown_coordinator().request(
+                    odin_local::ShutdownReason::kUnexpectedDeviceState, 1);
+                return;
             case LIDAR_DEVICE_STREAM_STOPPED:
                 need_open_device = false;
                 get_calib_file = false;
@@ -1588,6 +1607,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 #endif
                 lidar_destory_device(odinDevice);
                 odinDevice = nullptr;
+                request_device_setup_failure();
                 return;
             }
         }
@@ -1613,6 +1633,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 lidar_close_device(odinDevice);
                 lidar_destory_device(odinDevice);
                 odinDevice = nullptr;
+                request_device_setup_failure();
                 return;
             }
 
@@ -1739,6 +1760,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             #else
                 ROS_WARN("set depth parameter failed");
             #endif
+            request_device_setup_failure();
             return;
         }
         
@@ -1760,6 +1782,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             lidar_close_device(odinDevice);
             lidar_destory_device(odinDevice);
             odinDevice = nullptr;
+            request_device_setup_failure();
             return;
         }
 
@@ -1836,6 +1859,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
                 lidar_close_device(odinDevice);
                 lidar_destory_device(odinDevice);
                 odinDevice = nullptr;
+                request_device_setup_failure();
                 return;
             }
         }
@@ -1898,6 +1922,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             lidar_close_device(odinDevice);
             lidar_destory_device(odinDevice);
             odinDevice = nullptr;
+            request_device_setup_failure();
             return;
         }
         
@@ -1938,6 +1963,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             lidar_close_device(odinDevice);
             lidar_destory_device(odinDevice);
             odinDevice = nullptr;
+            request_device_setup_failure();
             return;
         }
         
@@ -1981,6 +2007,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             lidar_deactivate_stream_type(odinDevice, LIDAR_DT_SLAM_CLOUD);
         }
         
+        g_stream_started.store(true, std::memory_order_release);
         software_connect_timing = false;
         deviceConnected = true;
         deviceDisconnected = false;
@@ -2041,6 +2068,7 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
 
         deviceConnected = false;
         deviceDisconnected = true;
+        g_stream_started.store(false, std::memory_order_release);
         
         // Stop IMU dedicated thread
         stop_imu_thread();
@@ -2070,6 +2098,13 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
 
 int main(int argc, char *argv[])
 {
+    auto& shutdown_coordinator = odin_local::shutdown_coordinator();
+    // 必须早于 rclcpp/SDK 创建任何线程；后续线程继承 SIGINT/SIGTERM mask。
+    if (!shutdown_coordinator.block_shutdown_signals() ||
+        !shutdown_coordinator.start_signal_waiter()) {
+        std::fprintf(stderr, "Failed to initialize Odin shutdown signal waiter\n");
+        return 1;
+    }
 #ifdef ROS2
     rclcpp::init(argc, argv);
     auto node = std::make_shared<rclcpp::Node>("lydros_node");
@@ -2326,9 +2361,9 @@ int main(int argc, char *argv[])
     #endif
     };
 
-    // Register signal handlers for Ctrl+C
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    // ODIN_LOCAL_SHUTDOWN_COORDINATOR: 不再安装异步 signal handler。SIGINT 与
+    // SIGTERM 已在 main() 入口屏蔽，并由 shutdown_coordinator 的 sigwait 线程
+    // 同步接收；这里只保留主线程清理出口。
 
     try {
     #ifdef ROS2
@@ -2525,7 +2560,13 @@ int main(int argc, char *argv[])
             #else
                 ROS_ERROR("Lidar system init failed");
             #endif
-            return -1;
+            (void)shutdown_coordinator.request(
+                odin_local::ShutdownReason::kSdkInitFailed, 1);
+        } else {
+            g_sdk_initialized.store(true, std::memory_order_release);
+        }
+        if (shutdown_coordinator.requested()) {
+            perform_orderly_shutdown();
         }
         lidar_log_set_level(static_cast<lidar_log_level_e>(g_sdk_log_level));
         
@@ -2551,6 +2592,9 @@ int main(int argc, char *argv[])
         bool usbPresent = false;
         bool usbVersionChecked = false; 
         while (!deviceConnected) {
+            if (shutdown_coordinator.requested()) {
+                break;
+            }
             #ifdef ROS2
             if (!rclcpp::ok()) {
                 break;
@@ -2575,8 +2619,9 @@ int main(int argc, char *argv[])
                             ROS_FATAL("Device connected to USB 2.0 port. This device requires USB 3.0 or higher. Exiting program .Please use USB 3.0 and restart the device.");
                         #endif
                         
-                        lidar_system_deinit();
-                        return 1;
+                        (void)shutdown_coordinator.request(
+                            odin_local::ShutdownReason::kUsbTransport, 1);
+                        break;
                     }
                 }
             }
@@ -2593,26 +2638,25 @@ int main(int argc, char *argv[])
         #else
                 ROS_ERROR("Exception: %s", e.what());
         #endif
-                lidar_system_deinit();
-                return -1;
+        (void)shutdown_coordinator.request(
+            odin_local::ShutdownReason::kUnhandledException, 1);
+    }
+
+    if (shutdown_coordinator.requested()) {
+        perform_orderly_shutdown();
     }
 
     if (!deviceConnected) {
         #ifdef ROS2
-        if (g_ros_object) {
-            g_ros_object->stopTfExtraPublishTimer();
-            g_ros_object.reset();   // destroys all publishers/subscribers
-        }
-        node.reset();              // destroy the node first
-        rclcpp::shutdown();
+            const bool ros_ok = rclcpp::ok();
         #else
-        if (g_ros_object) {
-            delete g_ros_object;
-            g_ros_object = nullptr;
-        }
-        ros::shutdown();
+            const bool ros_ok = ros::ok();
         #endif
-        return 1;
+        (void)shutdown_coordinator.request(
+            ros_ok ? odin_local::ShutdownReason::kDeviceSetupFailed
+                   : odin_local::ShutdownReason::kRosShutdown,
+            ros_ok ? 1 : 0);
+        perform_orderly_shutdown();
     }
 
     bool disconnect_msg_printed = false;
@@ -2620,7 +2664,7 @@ int main(int argc, char *argv[])
         // Create 10Hz Rate object
         rclcpp::Rate rate(10);
         
-        while (rclcpp::ok()) {
+        while (rclcpp::ok() && !shutdown_coordinator.requested()) {
             rclcpp::spin_some(node);
             // Check device disconnection status
             if (deviceDisconnected.load()) {
@@ -2649,11 +2693,10 @@ int main(int argc, char *argv[])
             // Wait 0.1 seconds
             rate.sleep();
         }
-        rclcpp::shutdown();
     #else
         // Create 10Hz Rate object
         ros::Rate rate(10);
-        while (ros::ok()) {
+        while (ros::ok() && !shutdown_coordinator.requested()) {
             ros::spinOnce();
 
             // Check device disconnection status
@@ -2683,63 +2726,11 @@ int main(int argc, char *argv[])
             // Wait 0.1 seconds
             rate.sleep();
         }
-        ros::shutdown();
     #endif
 
-    // Cleanup on normal program exit
-    if (odinDevice) {
-        // Convert calib.yaml to cam_in_ex.txt at program end
-        if (g_ros_object) {
-            const std::filesystem::path out_path = g_ros_object->get_root_dir() / "image" / "cam_in_ex.txt";
-            (void)convert_calib_to_cam_in_ex(calib_file_, out_path);
-        }
-        #ifdef ROS2
-            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "pose_index: %d", g_ros_object->get_pose_index());
-            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "cloud_index: %d", g_ros_object->get_cloud_index());
-            RCLCPP_INFO(rclcpp::get_logger("device_cb"), "image_index: %d", g_ros_object->get_image_index());
-        #else
-            ROS_INFO("pose_index: %d", g_ros_object->get_pose_index());
-            ROS_INFO("cloud_index: %d", g_ros_object->get_cloud_index());
-            ROS_INFO("image_index: %d", g_ros_object->get_image_index());
-        #endif
-        // Perform cleanup on normal exit
-        // if(lidar_stop_stream(odinDevice, LIDAR_MODE_SLAM))
-        // {
-        //     #ifdef ROS2
-        //         RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_stop_stream failed");
-        //     #else
-        //         ROS_INFO("lidar_stop_stream failed");
-        //     #endif
-        // }
-        
-        if(lidar_unregister_stream_callback(odinDevice))
-        {
-            #ifdef ROS2
-                RCLCPP_INFO(rclcpp::get_logger("device_cb"), "lidar_unregister_stream_callback failed");
-            #else
-                ROS_INFO("lidar_unregister_stream_callback failed");
-            #endif
-        }
-        // lidar_close_device(odinDevice);
-        // lidar_destory_device(odinDevice);
-
-        if (dev_status_csv_file) {
-            std::fflush(dev_status_csv_file);
-            fclose(dev_status_csv_file);
-            dev_status_csv_file = nullptr;
-        }
+    if (!shutdown_coordinator.requested()) {
+        (void)shutdown_coordinator.request(
+            odin_local::ShutdownReason::kRosShutdown, 0);
     }
-    
-    // Stop custom parameter monitoring thread on exit
-    g_param_monitor_running = false;
-    if (g_param_monitor_thread.joinable()) {
-        g_param_monitor_thread.join();
-    }
-
-    
-    // lidar_system_deinit();
-
-
-
-    return 0;
+    perform_orderly_shutdown();
 }

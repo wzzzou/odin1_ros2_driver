@@ -4,7 +4,10 @@ import os
 import tempfile
 
 import yaml
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import (
+    get_package_prefix,
+    get_package_share_directory,
+)
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -150,12 +153,20 @@ def launch_setup(context, *args, **kwargs):
     ]
 
     if pcd_map_file:
+        parent_death_guard = os.path.join(
+            get_package_prefix('odin_ros_driver'),
+            'lib',
+            'odin_ros_driver',
+            'odin_parent_death_guard',
+        )
         actions.append(
             Node(
                 package='odin_ros_driver',
                 executable='static_pcd_map_publisher',
                 name='static_pcd_map_publisher',
+                exec_name='static_pcd_map_publisher',
                 output='screen',
+                prefix=parent_death_guard,
                 parameters=[{
                     'pcd_map_file': pcd_map_file,
                     'topic_name': '/odin1/map_cloud',

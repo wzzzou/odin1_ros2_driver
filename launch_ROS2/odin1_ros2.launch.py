@@ -2,10 +2,21 @@
 import os
 
 import yaml
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import (
+    get_package_prefix,
+    get_package_share_directory,
+)
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument,
+    EmitEvent,
+    LogInfo,
+    OpaqueFunction,
+    RegisterEventHandler,
+)
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -101,14 +112,24 @@ def launch_setup(context, *args, **kwargs):
     calib_file_path = os.path.join(get_odin_runtime_dir(), 'calib.yaml')
 
     host_sdk_library_path = clean_library_path()
+    parent_death_guard = os.path.join(
+        get_package_prefix('odin_ros_driver'),
+        'lib',
+        'odin_ros_driver',
+        'odin_parent_death_guard',
+    )
+    guarded_prefix = parent_death_guard
+    host_guarded_prefix = f'{parent_death_guard} --block-shutdown-signals'
 
     host_sdk_node = Node(
         package='odin_ros_driver',
         executable='host_sdk_sample',
         name='host_sdk_sample',
+        exec_name='host_sdk_sample',
         output='screen',
         additional_env={'LD_LIBRARY_PATH': host_sdk_library_path},
-        sigterm_timeout='20.0',
+        prefix=host_guarded_prefix,
+        sigterm_timeout='40.0',
         sigkill_timeout='5.0',
         parameters=[{
             'config_file': config_file,
@@ -121,7 +142,9 @@ def launch_setup(context, *args, **kwargs):
         package='odin_ros_driver',
         executable='pcd2depth_ros2_node',
         name='pcd2depth_ros2_node',
+        exec_name='pcd2depth_ros2_node',
         output='screen',
+        prefix=guarded_prefix,
         parameters=[pcd2depth_params]
     )
 
@@ -130,7 +153,9 @@ def launch_setup(context, *args, **kwargs):
         package='odin_ros_driver',
         executable='cloud_reprojection_ros2_node',
         name='cloud_reprojection_ros2_node',
+        exec_name='cloud_reprojection_ros2_node',
         output='screen',
+        prefix=guarded_prefix,
         parameters=[reprojection_params]
     )
 
@@ -139,7 +164,9 @@ def launch_setup(context, *args, **kwargs):
         package='odin_ros_driver',
         executable='image_overlay_node',
         name='image_overlay_node',
+        exec_name='image_overlay_node',
         output='screen',
+        prefix=guarded_prefix,
         parameters=[overlay_params]
     )
 
@@ -147,12 +174,27 @@ def launch_setup(context, *args, **kwargs):
         package='rviz2',
         executable='rviz2',
         name='rviz2',
+        exec_name='rviz2',
         output='screen',
+        prefix=guarded_prefix,
         arguments=['-d', rviz_config],
         condition=IfCondition(LaunchConfiguration('launch_rviz')),
     )
 
+    shutdown_on_host_exit = RegisterEventHandler(
+        OnProcessExit(
+            target_action=host_sdk_node,
+            on_exit=[
+                LogInfo(msg='Odin host driver exited; shutting down only this launch session'),
+                EmitEvent(event=Shutdown(reason='Odin host driver exited')),
+            ],
+        )
+    )
+
     actions = [
+        # Register before starting host_sdk_node so even an immediate fatal startup
+        # failure tears down this launch's RViz/helper nodes without global pkill.
+        shutdown_on_host_exit,
         host_sdk_node,
         pcd2depth_node,
         cloud_reprojection_node,

@@ -287,6 +287,12 @@ elseif(ROS_VERSION STREQUAL "ROS2")
         src/rawCloudRender.cpp
         src/camera_pose_visualization.cpp
         )
+
+    # ODIN_LOCAL_PARENT_DEATH_GUARD: tiny Linux wrapper used as Node(prefix=...).
+    # It gives each process a SIGTERM when its own launch parent disappears, so
+    # killing only the launch PID cannot strand a USB-owning host_sdk_sample.
+    add_executable(odin_parent_death_guard src/odin_parent_death_guard.cpp)
+    target_include_directories(odin_parent_death_guard PRIVATE include)
     
     # Link libraries
     target_link_libraries(host_sdk_sample
@@ -420,6 +426,7 @@ elseif(ROS_VERSION STREQUAL "ROS2")
     # Install executable
     install(TARGETS
         host_sdk_sample
+        odin_parent_death_guard
         pcd2depth_ros2_node
         cloud_reprojection_ros2_node
         image_overlay_node
