@@ -27,11 +27,16 @@
 
 对策
 ------------------------------------------------------------------
-统一解析到一个可写、与部署形态无关的运行时根目录，优先级：
+统一解析到一个可写、与部署形态无关的运行时根目录。
 
-    1. 环境变量 ODIN_DATA_DIR（显式指定，便于 NUC / 多机 / 录制盘分离）
-    2. $HOME/.ros/odin_ros_driver  （默认；与官方 calib 主存储位置一致）
-    3. 当前工作目录下的 odin_ros_driver_data（HOME 不可用时的兜底）
+优先复用官方已有的 odin_ros_driver::GetOdinRuntimeDir()（include/odin_calib_path.h），
+它已经是 calib 主存储的路径来源，优先级为
+    ODIN_CALIB_DIR -> ROS_HOME -> $HOME/.ros/odin_ros_driver -> /tmp/odin_ros_driver
+launch 端 get_odin_runtime_dir() 也是同一套优先级。复用它而不是另写一份，
+可以保证 C++、launch、calib、数据输出四者永远指向同一个位置。
+
+额外提供 ODIN_DATA_DIR，优先级高于上面：录制数据体积很大（本仓历史 recorddata
+已达 8.6 GB），需要单独放到大容量盘时用它覆盖，而不影响 calib 的位置。
 
 不再写源码树，也不再写 share 目录。已存在于源码树的历史数据不迁移，只影响新数据。
 
@@ -44,6 +49,8 @@
 #include <filesystem>
 #include <string>
 
+#include "odin_calib_path.h"
+
 namespace odin_local {
 
 // 运行时可写数据根目录。
@@ -53,12 +60,8 @@ inline std::filesystem::path runtime_root() {
             return std::filesystem::path(env);
         }
     }
-    if (const char* home = std::getenv("HOME")) {
-        if (home[0] != '\0') {
-            return std::filesystem::path(home) / ".ros" / "odin_ros_driver";
-        }
-    }
-    return std::filesystem::current_path() / "odin_ros_driver_data";
+    // 复用官方实现，保证与 calib 主存储、launch 端解析结果一致。
+    return std::filesystem::path(odin_ros_driver::GetOdinRuntimeDir());
 }
 
 inline std::string runtime_subdir(const char* name) {
