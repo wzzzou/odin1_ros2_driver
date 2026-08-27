@@ -14,6 +14,7 @@ limitations under the License.
 #include "host_sdk_sample.h"
 #include "yaml_parser.h"
 #include "odin_local/map_transfer_guard.hpp"  // ODIN_LOCAL_MAP_GUARD
+#include "odin_local/runtime_paths.hpp"        // ODIN_LOCAL_RUNTIME_PATHS
 #include "rawCloudRender.h"
 #include "odin_calib_path.h"
 #include <filesystem> 
@@ -1373,23 +1374,11 @@ static void lidar_device_callback(const lidar_device_info_t* device, bool attach
             return;
         }
 	const std::string package_name = "odin_ros_driver";
-	std::string config_dir = "";
-	#ifdef ROS2
-	    char* ros_workspace = std::getenv("COLCON_PREFIX_PATH");
-	    if (ros_workspace) {
-		std::string workspace_path(ros_workspace);
-		size_t pos = workspace_path.find("/install");
-		if (pos != std::string::npos) {
-		    config_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/config";
-		} else {
-		    config_dir = ament_index_cpp::get_package_share_directory(package_name) + "/config";
-		}
-	    } else {
-		config_dir = ament_index_cpp::get_package_share_directory(package_name) + "/config";
-	    }
-	#else
-	    config_dir = ros::package::getPath(package_name) + "/config";
-	#endif
+	// ODIN_LOCAL_RUNTIME_PATHS: 原实现与 recorddata/log/map 用同一套
+	// COLCON_PREFIX_PATH 截断逻辑，把 calib 备份写进源码树 config/，
+	// 存在同样的"污染 git 工作区 / 只读部署失败 / 嵌套路径"问题。
+	// 备份改放运行时根目录下的 calib_backup/，与主存储同盘但不同文件。
+	const std::string config_dir = odin_local::runtime_subdir("calib_backup");
         #ifdef ROS2
             RCLCPP_INFO(rclcpp::get_logger("device_cb"),
                         "========== [CALIB] SAVE DIR (primary): %s | BACKUP DIR: %s ==========",
@@ -2329,7 +2318,12 @@ int main(int argc, char *argv[])
 
     try {
     #ifdef ROS2
-        std::string package_path = get_package_source_directory();
+        // ODIN_LOCAL_RUNTIME_PATHS: 原实现用 get_package_source_directory()，
+        // 即按 __FILE__ 的编译期路径回溯找 package.xml。二进制一旦离开构建机
+        // （NUC 只部署 install/）该路径不存在，会抛 "Failed to locate package
+        // root directory"；cwd 变化时还会解析出错误的嵌套路径。
+        // 改用 ament 索引，与安装态一致，可搬运。
+        std::string package_path = get_package_path("odin_ros_driver");
         std::cout << "package_path: " << package_path << std::endl;
     #else
     	std::string package_path = get_package_share_path("odin_ros_driver");
@@ -2470,32 +2464,20 @@ int main(int argc, char *argv[])
         lidar_log_set_level(static_cast<lidar_log_level_e>(g_sdk_log_level));
 
         const std::string package_name = "odin_ros_driver";
-        std::string data_dir = "";
-        std::string log_dir = "";
-        std::string map_dir = "";
+        // ODIN_LOCAL_RUNTIME_PATHS: 原实现按 COLCON_PREFIX_PATH 截断 "/install"
+        // 后拼源码树路径，会把运行时数据写进 git 工作区，且在包内存在遗留
+        // install/ 时会拼出双层嵌套路径（实测 11 分钟写入 7.1GB）。
+        // 改为统一解析到可写的运行时根目录，详见 include/odin_local/runtime_paths.hpp。
+        std::string data_dir = odin_local::runtime_subdir("recorddata");
+        std::string log_dir = odin_local::runtime_subdir("log");
+        std::string map_dir = odin_local::runtime_subdir("map");
         #ifdef ROS2
-            char* ros_workspace = std::getenv("COLCON_PREFIX_PATH");
-            if (ros_workspace) {
-                std::string workspace_path(ros_workspace);
-                size_t pos = workspace_path.find("/install");
-                if (pos != std::string::npos) {
-                    data_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/recorddata";
-                    log_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/log";
-                    map_dir = workspace_path.substr(0, pos) + "/src/odin_ros_driver/map";
-                } else {
-                    data_dir = ament_index_cpp::get_package_share_directory(package_name) + "/recorddata";
-                    log_dir = ament_index_cpp::get_package_share_directory(package_name) + "/log";
-                    map_dir = ament_index_cpp::get_package_share_directory(package_name) + "/map";
-                }
-            } else {
-                data_dir = ament_index_cpp::get_package_share_directory(package_name) + "/recorddata";
-                log_dir = ament_index_cpp::get_package_share_directory(package_name) + "/log";
-                map_dir = ament_index_cpp::get_package_share_directory(package_name) + "/map";
-            }
+            RCLCPP_INFO(rclcpp::get_logger("runtime_paths"),
+                        "Runtime data root: %s (override with ODIN_DATA_DIR)",
+                        odin_local::runtime_root().c_str());
         #else
-            data_dir = ros::package::getPath(package_name) + "/recorddata";
-            log_dir = ros::package::getPath(package_name) + "/log";
-            map_dir = ros::package::getPath(package_name) + "/map";
+            ROS_INFO("Runtime data root: %s (override with ODIN_DATA_DIR)",
+                     odin_local::runtime_root().c_str());
         #endif
 
         if (g_record_data) {
