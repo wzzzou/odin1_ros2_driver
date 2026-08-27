@@ -1,10 +1,10 @@
 /.vscode
-/build
-/install
+/build*
+/install*
 /launch_ROS2/__pycache__
 /src/odin_ros_driver
 recorddata/
 /config/calib.yaml
 /image
-/log
+/log*
 /map
