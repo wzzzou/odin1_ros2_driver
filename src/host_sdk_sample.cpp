@@ -15,6 +15,7 @@ limitations under the License.
 #include "yaml_parser.h"
 #include "odin_local/map_transfer_guard.hpp"  // ODIN_LOCAL_MAP_GUARD
 #include "odin_local/runtime_paths.hpp"        // ODIN_LOCAL_RUNTIME_PATHS
+#include "odin_local/signal_reentry.hpp"       // ODIN_LOCAL_SIGNAL_REENTRY
 #include "rawCloudRender.h"
 #include "odin_calib_path.h"
 #include <filesystem> 
@@ -336,13 +337,30 @@ static bool convert_calib_to_cam_in_ex(const std::string& calib_path, const std:
 // Signal handler for Ctrl+C
 static void signal_handler(int signum) {
     if (signum == SIGINT || signum == SIGTERM) {
+        // ODIN_LOCAL_SIGNAL_REENTRY: 官方用 signal() 注册，它只在执行期间屏蔽
+        // 同一个信号，SIGINT 与 SIGTERM 可以交叉进入同一个 handler。
+        // 2026-08-27 实测（P0 第 8 轮）：SIGTERM 的 handler 卡在
+        // lidar_system_deinit() 内 28.6 秒，期间 SIGINT 进入并并发执行同一段
+        // 清理——日志出现两次 "Deinitializing lidar system"，第二次因
+        // odinDevice 已被前一个 handler 置空而跳过了 "Closing device"。
+        // 判据与宽限期见 include/odin_local/signal_reentry.hpp。
+        switch (odin_local::reentry_guard().on_signal()) {
+            case odin_local::SignalReentryGuard::Action::kIgnore:
+                // 仍在宽限期内：让首个 handler 走完清理，不要退化成 kill -9。
+                return;
+            case odin_local::SignalReentryGuard::Action::kForceExit:
+                _exit(1);
+            case odin_local::SignalReentryGuard::Action::kProceed:
+                break;
+        }
+
+        g_shutdown_requested = true;
+
         #ifdef ROS2
             RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Received signal %d, shutting down...", signum);
         #else
             ROS_INFO("Received signal %d, shutting down...", signum);
         #endif
-
-        g_shutdown_requested = true;
 
         // ODIN_LOCAL_MAP_GUARD: 必须在停流/置空 odinDevice/deinit 之前处理。
         // 地图传输跑在 detach 线程里并持有全局 odinDevice；若此时直接拆设备，
