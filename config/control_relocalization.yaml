@@ -23,6 +23,12 @@ register_keys:
   lidar_frame: "odin1_lidar"
   camera_frame: "odin1_camera"
 
+  # 注意：streamctrl 在当前版本没有任何消费者，改它不会有效果。
+  # include/host_sdk_sample.h 里有同名宏 STREAMCTRL，但那批键名宏
+  # （STREAMCTRL/SENDRGB/SENDIMU/SENDODOM/SENDDTOF/SENDCLOUDSLAM/EXIT 共 7 个）
+  # 整批零引用，是早期交互式 sample 的残留；且该键不带 custom_ 前缀，
+  # 也不会经 applyCustomParameters() 透传给设备。
+  # 各条流的实际开关是下面的 sendrgb / sendimu / sendodom / senddtof 等。
   streamctrl: 1
 
   sendrgbcompressed: 1
@@ -49,6 +55,10 @@ register_keys:
 
   senddepth: 0
   sendreprojection: 0
+  # sendoverlay 现在真正控制 image_overlay_node 是否启动（见
+  # launch_ROS2/odin1_ros2.launch.py）。此前该键零消费者，无论配 0 还是 1
+  # overlay 节点都会启动并发布。下面四个 overlay_* 参数一直是有效的，
+  # 经 ROS 参数 register_keys.overlay_* 传入 image_overlay_node。
   sendoverlay: 0
   overlay_reprojected_topic: "/odin1/reprojected_image"
   overlay_camera_topic: "/odin1/image/undistorted"

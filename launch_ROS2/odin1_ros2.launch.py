@@ -33,6 +33,10 @@ def get_custom_map_mode(config_file):
     return params.get('register_keys', {}).get('custom_map_mode', 0)
 
 
+def get_register_key(config_file, key, default=0):
+    return load_yaml(config_file).get('register_keys', {}).get(key, default)
+
+
 def load_config_params(config_file, calib_file_path, map_file):
     params = load_yaml(config_file)
     params.pop('pcd_map', None)
@@ -152,8 +156,13 @@ def launch_setup(context, *args, **kwargs):
         host_sdk_node,
         pcd2depth_node,
         cloud_reprojection_node,
-        image_overlay_node,
     ]
+    # sendoverlay 此前在全仓没有任何消费者：无论配成 0 还是 1，overlay 节点都会
+    # 无条件启动并发布。senddepth=0 / sendreprojection=0 时对应节点会自行
+    # return 0 退出（pcd2depth_ros2.cpp、cloud_reprojection_ros.cpp），只有
+    # overlay 缺这个分支。这里补上，使三个附属节点的开关语义一致。
+    if int(get_register_key(config_file, 'sendoverlay', 0)) != 0:
+        actions.append(image_overlay_node)
     actions.append(rviz_node)
     return actions
 
