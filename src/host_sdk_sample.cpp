@@ -462,27 +462,23 @@ static void signal_handler(int signum) {
             dev_status_csv_file = nullptr;
         }
 
-        // IMPORTANT: destroy ROS publishers/subscribers BEFORE shutting down
-        // the ROS context. Otherwise the global g_ros_object (a shared_ptr)
-        // is destroyed by static finalizers AFTER rclcpp::shutdown(), which
-        // triggers a flood of "Failed to delete datawriter" /
-        // "Error in destruction of rcl publisher handle: cannot publish data".
-        // Mirrors the clean-exit ordering at the end of main().
-        // 必须在关闭 ROS 上下文之前先析构 publisher/subscriber。否则全局
-        // g_ros_object（shared_ptr）会在 rclcpp::shutdown() 之后由静态析构器
-        // 销毁，rmw 层会刷出大量 "Failed to delete datawriter" /
-        // "Error in destruction of rcl publisher handle" 噪声。此处与 main()
-        // 末尾的正常退出顺序保持一致。
+        // 官方原本在此处 reset()/delete g_ros_object，注释说明其目的是：避免
+        // 全局 shared_ptr 被**静态析构器**在 rclcpp::shutdown() 之后销毁，从而
+        // 刷出大量 "Failed to delete datawriter" / "Error in destruction of rcl
+        // publisher handle" 噪声。
+        //
+        // ODIN_LOCAL_SIGNAL_REENTRY: 本文件末尾已改用 _exit()，静态析构器根本
+        // 不会运行，上述目的已自动达成，主动析构反而有害：lidar_system_deinit()
+        // 返回后 SDK 回调线程仍可能有在途调用访问 g_ros_object，此时析构
+        // publisher 会造成 use-after-free。2026-08-27 P0 复验 TERM round 2 实测
+        // 到一次 SIGSEGV（exit code -11），段错误正落在 "sdk deinit complete"
+        // 之后的这一区间。
+        //
+        // 因此不再主动拆 ROS 对象，只调用 shutdown() 让 DDS 对端及时感知，
+        // 其余交给进程退出由内核回收。
         #ifdef ROS2
-            if (g_ros_object) {
-                g_ros_object.reset();
-            }
             rclcpp::shutdown();
         #else
-            if (g_ros_object) {
-                delete g_ros_object;
-                g_ros_object = nullptr;
-            }
             ros::shutdown();
         #endif
 
