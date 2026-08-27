@@ -13,6 +13,7 @@ limitations under the License.
 
 #include "host_sdk_sample.h"
 #include "yaml_parser.h"
+#include "odin_local/map_transfer_guard.hpp"  // ODIN_LOCAL_MAP_GUARD
 #include "rawCloudRender.h"
 #include "odin_calib_path.h"
 #include <filesystem> 
@@ -342,6 +343,40 @@ static void signal_handler(int signum) {
 
         g_shutdown_requested = true;
 
+        // ODIN_LOCAL_MAP_GUARD: 必须在停流/置空 odinDevice/deinit 之前处理。
+        // 地图传输跑在 detach 线程里并持有全局 odinDevice；若此时直接拆设备，
+        // 实测会留下 0 字节地图文件（无任何告警），并使设备侧状态机卡住，
+        // 之后的启动停在 "starting software connection"，必须断电才能恢复。
+        if (g_map_transfer_in_progress.load()) {
+            #ifdef ROS2
+                RCLCPP_WARN(rclcpp::get_logger("signal_handler"),
+                            "Map transfer in progress, waiting up to %.0fs before shutdown...",
+                            odin_local::MapTransferGuard::kWaitSeconds);
+            #else
+                ROS_WARN("Map transfer in progress, waiting up to %.0fs before shutdown...",
+                         odin_local::MapTransferGuard::kWaitSeconds);
+            #endif
+            const bool finished = odin_local::MapTransferGuard::wait_until_idle(
+                [] { return g_map_transfer_in_progress.load(); });
+            if (finished) {
+                #ifdef ROS2
+                    RCLCPP_INFO(rclcpp::get_logger("signal_handler"), "Map transfer finished, continuing shutdown");
+                #else
+                    ROS_INFO("Map transfer finished, continuing shutdown");
+                #endif
+            } else {
+                const bool removed = odin_local::map_guard().cleanup_incomplete();
+                #ifdef ROS2
+                    RCLCPP_ERROR(rclcpp::get_logger("signal_handler"),
+                                 "Map transfer did not finish in time; map is NOT saved.%s",
+                                 removed ? " Removed the incomplete 0-byte file." : "");
+                #else
+                    ROS_ERROR("Map transfer did not finish in time; map is NOT saved.%s",
+                              removed ? " Removed the incomplete 0-byte file." : "");
+                #endif
+            }
+        }
+
         // Stop TF extra publish thread
         #ifdef ROS2
         if (g_ros_object) {
@@ -554,7 +589,10 @@ static void process_command_file() {
                         // Mark transfer as in-progress BEFORE spawning the thread to avoid
                         // race conditions with subsequent set save_map=1 calls.
                         g_map_transfer_in_progress.store(true);
-                        
+                        // ODIN_LOCAL_MAP_GUARD: 记录目标文件，供信号退出时判断是否
+                        // 需要等待，以及清理 0 字节的不完整产物。
+                        odin_local::map_guard().begin(map_dir + "/" + map_name);
+
                         // Run save-map in a background thread so we don't block the command processor.
                         // All the orchestration (trigger -> poll -> fetch) is now handled inside
                         // the SDK's lidar_save_map() one-shot API, so this side just blocks on it
@@ -563,6 +601,7 @@ static void process_command_file() {
                             // 0 = use SDK default generation timeout (120s).
                             int ret = lidar_save_map(odinDevice, map_dir.c_str(), map_name.c_str(), 0);
                             // Always clear the in-progress flag when this thread exits
+                            odin_local::map_guard().end(ret == 0);  // ODIN_LOCAL_MAP_GUARD
                             g_map_transfer_in_progress.store(false);
                             
                             if (ret == 0) {
